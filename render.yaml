@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: clipmint-render
+    runtime: docker
+    plan: free
+    branch: clipmint-free-apk
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    autoDeploy: true
