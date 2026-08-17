@@ -58,7 +58,6 @@ function makeClips(duration, count, requestedLength) {
     }
     starts.push(start);
   }
-
   return starts.map((start, index) => {
     const end = Math.min(duration, start + length);
     return {
@@ -80,10 +79,22 @@ function makeClips(duration, count, requestedLength) {
   });
 }
 
+async function runCommand(file, args, options = {}) {
+  try {
+    return await execFileAsync(file, args, options);
+  } catch (error) {
+    const stderr = String(error?.stderr || '').trim();
+    const stdout = String(error?.stdout || '').trim();
+    const detail = stderr || stdout || error?.message || 'Command failed';
+    throw new Error(`${file.split('/').pop()} failed: ${detail}`.slice(0, 1200));
+  }
+}
+
 async function getVideoInfo(url) {
-  const { stdout } = await execFileAsync(YTDLP, [
-    '--dump-single-json', '--skip-download', '--no-playlist', '--no-warnings', '--js-runtimes', 'node', url
-  ], { maxBuffer: 20 * 1024 * 1024, timeout: 60000 });
+  const { stdout } = await runCommand(YTDLP, [
+    '--dump-single-json', '--skip-download', '--no-playlist', '--no-warnings',
+    '--js-runtimes', 'node', url
+  ], { maxBuffer: 20 * 1024 * 1024, timeout: 90000 });
   return JSON.parse(stdout);
 }
 
@@ -92,25 +103,29 @@ async function renderClip(url, start, end) {
   const inputPattern = join(workDir, 'source.%(ext)s');
   const output = join(workDir, 'clip.mp4');
   try {
-    await execFileAsync(YTDLP, [
+    // Use a broadly compatible MP4 format first. This avoids slow/high-memory
+    // separate video+audio downloads on Render's free instance.
+    await runCommand(YTDLP, [
       '--no-playlist', '--no-warnings', '--js-runtimes', 'node',
-      '-f', 'bv*+ba/b',
+      '-f', 'best[ext=mp4][height<=1080]/best[height<=1080]/best',
       '--download-sections', `*${start}-${end}`,
+      '--force-overwrites', '--no-part',
       '--merge-output-format', 'mp4',
       '--ffmpeg-location', FFMPEG,
       '-o', inputPattern,
       url
-    ], { maxBuffer: 20 * 1024 * 1024, timeout: 110000 });
+    ], { maxBuffer: 20 * 1024 * 1024, timeout: 180000 });
 
     const sourceName = readdirSync(workDir).find((name) => /^source\.(mp4|mkv|webm|mov)$/.test(name));
-    if (!sourceName) throw new Error('yt-dlp did not produce a video file');
+    if (!sourceName) throw new Error('yt-dlp completed but no source video was produced');
 
-    await execFileAsync(FFMPEG, [
-      '-y', '-ss', '0', '-i', join(workDir, sourceName), '-t', String(end - start),
+    await runCommand(FFMPEG, [
+      '-y', '-i', join(workDir, sourceName),
+      '-t', String(end - start),
       '-vf', 'scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920',
       '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
       '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', output
-    ], { maxBuffer: 10 * 1024 * 1024, timeout: 110000 });
+    ], { maxBuffer: 10 * 1024 * 1024, timeout: 180000 });
 
     return await readFile(output);
   } finally {
@@ -175,8 +190,9 @@ const server = http.createServer(async (req, res) => {
 
     return json(res, 404, { error: 'Not found' });
   } catch (error) {
+    console.error('ClipMint request failed:', error);
     const message = error instanceof Error ? error.message : 'Server error';
-    return json(res, 502, { error: message.slice(0, 300) });
+    return json(res, 502, { error: message.slice(0, 1200) });
   }
 });
 
