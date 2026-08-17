@@ -1,0 +1,6 @@
+{
+  "name": "ShortsCut",
+  "description": "Extract the most watched 10-30s viral clips from full YouTube videos ready to post as YouTube Shorts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

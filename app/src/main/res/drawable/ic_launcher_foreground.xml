@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Vertical 9:16 Shorts Device/Frame -->
+    <path
+        android:fillColor="#1FFFFFFF"
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineJoin="round"
+        android:pathData="M38,24 L70,24 C73.3,24 76,26.7 76,30 L76,78 C76,81.3 73.3,84 70,84 L38,84 C34.7,84 32,81.3 32,78 L32,30 C32,26.7 34.7,24 38,24 Z" />
+    
+    <!-- Top & Bottom Accent Reel Bars -->
+    <path
+        android:fillColor="#FFFF3366"
+        android:pathData="M34,26 L74,26 C75.1,26 76,26.9 76,28 L76,31 L32,31 L32,28 C32,26.9 32.9,26 34,26 Z" />
+    <path
+        android:fillColor="#FFFFCC00"
+        android:pathData="M32,77 L76,77 L76,80 C76,81.1 75.1,82 74,82 L34,82 C32.9,82 32,81.1 32,80 L32,77 Z" />
+
+    <!-- Scissors / Clipper Cut Accent -->
+    <!-- Blade 1 -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M26,38 L54,54 L82,38" />
+    <!-- Blade 2 -->
+    <path
+        android:strokeColor="#FFFFFFFF"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M26,70 L54,54 L82,70" />
+
+    <!-- Center Play / Viral Badge -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M50,47 L62,54 L50,61 Z" />
+
+    <!-- Sparkle Stars for Viral Highlight -->
+    <path
+        android:fillColor="#FFFFD700"
+        android:pathData="M69,36 L70,39 L73,40 L70,41 L69,44 L68,41 L65,40 L68,39 Z" />
+    <path
+        android:fillColor="#FFFFD700"
+        android:pathData="M39,66 L40,68 L42,69 L40,70 L39,72 L38,70 L36,69 L38,68 Z" />
+</vector>
