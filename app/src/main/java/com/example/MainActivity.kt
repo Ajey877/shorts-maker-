@@ -11,7 +11,6 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -39,7 +38,6 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -50,7 +48,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.remote.ClipMintBackendService
-import com.example.model.ShortClip
 import com.example.ui.ShortsViewModel
 import com.example.ui.components.ExportUploadDialog
 import com.example.ui.screens.HomeScreen
@@ -59,7 +56,6 @@ import com.example.ui.theme.BrightCrimson
 import com.example.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
-
   private val viewModel: ShortsViewModel by viewModels()
   private val backendService = ClipMintBackendService()
 
@@ -89,9 +85,7 @@ class MainActivity : ComponentActivity() {
                     contentDescription = "Studio"
                   )
                 },
-                label = {
-                  Text("Shorts Studio", fontWeight = if (uiState.activeTab == 0) FontWeight.Bold else FontWeight.Normal)
-                },
+                label = { Text("Shorts Studio", fontWeight = if (uiState.activeTab == 0) FontWeight.Bold else FontWeight.Normal) },
                 colors = NavigationBarItemDefaults.colors(
                   selectedIconColor = MaterialTheme.colorScheme.primary,
                   selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -100,7 +94,6 @@ class MainActivity : ComponentActivity() {
                   unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
               )
-
               NavigationBarItem(
                 selected = uiState.activeTab == 1,
                 onClick = { viewModel.setActiveTab(1) },
@@ -110,9 +103,7 @@ class MainActivity : ComponentActivity() {
                     contentDescription = "Library"
                   )
                 },
-                label = {
-                  Text("Saved (${savedClips.size})", fontWeight = if (uiState.activeTab == 1) FontWeight.Bold else FontWeight.Normal)
-                },
+                label = { Text("Saved (${savedClips.size})", fontWeight = if (uiState.activeTab == 1) FontWeight.Bold else FontWeight.Normal) },
                 colors = NavigationBarItemDefaults.colors(
                   selectedIconColor = MaterialTheme.colorScheme.primary,
                   selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -180,19 +171,24 @@ class MainActivity : ComponentActivity() {
               )
             }
 
-            // Download the currently selected segment as a real 9:16 MP4.
-            if (uiState.activeTab == 0 && uiState.selectedClip != null && uiState.currentVideo != null) {
+            val downloadVideo = uiState.currentVideo
+            val downloadClip = uiState.selectedClip
+            if (uiState.activeTab == 0 && downloadClip != null && downloadVideo != null) {
               FloatingActionButton(
                 onClick = {
-                  val jobId = backendService.enqueueDownload(
-                    context,
-                    uiState.currentVideo.url,
-                    uiState.selectedClip
-                  )
+                  val jobId = backendService.enqueueDownload(context, downloadVideo.url, downloadClip)
                   if (jobId != null) {
-                    Toast.makeText(context, "Rendering Short #${uiState.selectedClip.clipIndex}. Check Downloads when complete.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                      context,
+                      "Rendering Short #${downloadClip.clipIndex}. Check Downloads when complete.",
+                      Toast.LENGTH_LONG
+                    ).show()
                   } else {
-                    Toast.makeText(context, "Connect the app to the free Render backend first.", Toast.LENGTH_LONG).show()
+                    Toast.makeText(
+                      context,
+                      "Connect the app to the free Render backend first.",
+                      Toast.LENGTH_LONG
+                    ).show()
                   }
                 },
                 containerColor = MaterialTheme.colorScheme.primary,
@@ -227,13 +223,14 @@ class MainActivity : ComponentActivity() {
               }
             }
 
-            if (uiState.showUploadDialog && uiState.selectedClip != null) {
+            val dialogClip = uiState.selectedClip
+            if (uiState.showUploadDialog && dialogClip != null) {
               ExportUploadDialog(
-                clip = uiState.selectedClip!!,
+                clip = dialogClip,
                 onDismiss = { viewModel.setUploadDialogVisible(false) },
-                onCopyMetadata = { viewModel.copyShortsMetadata(context, uiState.selectedClip!!) },
-                onOpenYouTubeShorts = { viewModel.openYouTubeShortsUpload(context, uiState.selectedClip!!) },
-                onMarkPosted = { viewModel.togglePostedStatus(uiState.selectedClip!!.id, true) }
+                onCopyMetadata = { viewModel.copyShortsMetadata(context, dialogClip) },
+                onOpenYouTubeShorts = { viewModel.openYouTubeShortsUpload(context, dialogClip) },
+                onMarkPosted = { viewModel.togglePostedStatus(dialogClip.id, true) }
               )
             }
           }
