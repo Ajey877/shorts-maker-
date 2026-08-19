@@ -27,7 +27,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -83,7 +82,7 @@ fun ShortsStudioPlayer(
   val currentSubtitle = clip.sampleSubtitles.lastOrNull { it.relativeSec <= playbackPositionSec }
     ?: clip.sampleSubtitles.firstOrNull()
 
-  val player = remember(previewUrl) {
+  val exoPlayer = remember(previewUrl) {
     previewUrl?.takeIf { it.startsWith("http") }?.let {
       ExoPlayer.Builder(context).build().apply {
         setMediaItem(MediaItem.fromUri(it))
@@ -94,40 +93,37 @@ fun ShortsStudioPlayer(
     }
   }
 
-  DisposableEffect(player) {
+  DisposableEffect(exoPlayer) {
     val listener = object : Player.Listener {
       override fun onIsPlayingChanged(isPlayingNow: Boolean) {
         onPlayingChanged(isPlayingNow)
       }
-      override fun onPlaybackStateChanged(state: Int) {
-        if (state == Player.STATE_ENDED) onPlayingChanged(false)
-      }
     }
-    player?.addListener(listener)
+    exoPlayer?.addListener(listener)
     onDispose {
-      player?.removeListener(listener)
-      player?.release()
+      exoPlayer?.removeListener(listener)
+      exoPlayer?.release()
     }
   }
 
-  LaunchedEffect(player, isPlaying) {
-    player ?: return@LaunchedEffect
-    if (isPlaying) player.play() else player.pause()
+  LaunchedEffect(exoPlayer, isPlaying) {
+    exoPlayer ?: return@LaunchedEffect
+    if (isPlaying) exoPlayer.play() else exoPlayer.pause()
   }
 
-  LaunchedEffect(player, playbackPositionSec) {
-    player ?: return@LaunchedEffect
-    val playerSeconds = player.currentPosition.coerceAtLeast(0L) / 1000f
-    if (abs(playerSeconds - playbackPositionSec) > 0.8f) {
-      player.seekTo((playbackPositionSec * 1000f).toLong().coerceAtLeast(0L))
+  LaunchedEffect(exoPlayer, playbackPositionSec) {
+    exoPlayer ?: return@LaunchedEffect
+    val actual = exoPlayer.currentPosition.coerceAtLeast(0L) / 1000f
+    if (abs(actual - playbackPositionSec) > 0.8f) {
+      exoPlayer.seekTo((playbackPositionSec * 1000f).toLong().coerceAtLeast(0L))
     }
   }
 
-  LaunchedEffect(player, duration) {
-    player ?: return@LaunchedEffect
+  LaunchedEffect(exoPlayer, duration) {
+    exoPlayer ?: return@LaunchedEffect
     while (true) {
       delay(100)
-      val current = (player.currentPosition / 1000f).coerceIn(0f, duration.toFloat())
+      val current = (exoPlayer.currentPosition / 1000f).coerceIn(0f, duration.toFloat())
       onPlaybackPositionChanged(current)
     }
   }
@@ -167,33 +163,24 @@ fun ShortsStudioPlayer(
           .clip(MaterialTheme.shapes.large)
           .background(Color.Black)
       ) {
-        if (player != null) {
+        if (exoPlayer != null) {
           AndroidView(
             factory = { viewContext ->
               PlayerView(viewContext).apply {
                 useController = false
                 setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
-                resizeMode = when (framingMode) {
-                  FramingMode.BLUR_BACKGROUND -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-                  FramingMode.SPLIT_SCREEN -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                  FramingMode.CENTER_CROP -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                }
-                player = this@letPlayer
+                resizeMode = resizeModeFor(framingMode)
+                this.player = exoPlayer
               }
             },
             update = { playerView ->
-              playerView.player = player
-              playerView.resizeMode = when (framingMode) {
-                FramingMode.BLUR_BACKGROUND -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-                FramingMode.SPLIT_SCREEN -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-                FramingMode.CENTER_CROP -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-              }
+              playerView.player = exoPlayer
+              playerView.resizeMode = resizeModeFor(framingMode)
             },
             modifier = Modifier.fillMaxSize()
           )
         } else {
-          val thumbnail = videoInfo?.thumbnailUrl
-          if (!thumbnail.isNullOrBlank()) {
+          videoInfo?.thumbnailUrl?.let { thumbnail ->
             AsyncImage(
               model = ImageRequest.Builder(context).data(thumbnail).crossfade(true).build(),
               contentDescription = "Video preview thumbnail",
@@ -264,10 +251,7 @@ fun ShortsStudioPlayer(
             contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
             tonalElevation = 3.dp
           ) {
-            IconButton(
-              onClick = { onPlayingChanged(true) },
-              modifier = Modifier.fillMaxSize()
-            ) {
+            IconButton(onClick = { onPlayingChanged(true) }, modifier = Modifier.fillMaxSize()) {
               Icon(Icons.Default.PlayArrow, contentDescription = "Play", modifier = Modifier.size(34.dp))
             }
           }
@@ -276,14 +260,11 @@ fun ShortsStudioPlayer(
 
       Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         IconButton(onClick = { onPlayingChanged(!isPlaying) }) {
-          Icon(
-            if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-            contentDescription = if (isPlaying) "Pause" else "Play"
-          )
+          Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null)
         }
         Slider(
           value = playbackPositionSec.coerceIn(0f, duration.toFloat()),
-          onValueChange = { onPlaybackPositionChanged(it) },
+          onValueChange = onPlaybackPositionChanged,
           valueRange = 0f..duration.toFloat(),
           modifier = Modifier.weight(1f)
         )
@@ -364,5 +345,8 @@ fun ShortsStudioPlayer(
   }
 }
 
-private val this@letPlayer: ExoPlayer
-  get() = error("PlayerView receives its player in update()")
+private fun resizeModeFor(mode: FramingMode): Int = when (mode) {
+  FramingMode.BLUR_BACKGROUND -> AspectRatioFrameLayout.RESIZE_MODE_FIT
+  FramingMode.SPLIT_SCREEN -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+  FramingMode.CENTER_CROP -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+}
