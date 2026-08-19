@@ -19,6 +19,8 @@ jobs:
           node-version: '22'
       - name: Check backend syntax
         run: node --check backend/server.js
+      - name: Build backend container
+        run: docker build --tag clipmint-backend:ci ./backend
 
   build:
     runs-on: ubuntu-latest
@@ -51,6 +53,9 @@ jobs:
             -keysize 2048 \
             -validity 10000 \
             -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Run Android unit tests
+        run: gradle testDebugUnitTest --stacktrace
 
       - name: Build debug APK
         run: gradle assembleDebug --stacktrace
