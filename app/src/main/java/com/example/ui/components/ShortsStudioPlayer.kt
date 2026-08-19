@@ -1,14 +1,8 @@
 package com.example.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -23,17 +17,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Crop
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.TextFields
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -51,12 +40,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.shadow
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -67,11 +52,6 @@ import com.example.model.CaptionStyle
 import com.example.model.FramingMode
 import com.example.model.ShortClip
 import com.example.model.YouTubeVideoInfo
-import com.example.ui.theme.AmberGlow
-import com.example.ui.theme.BrightCrimson
-import com.example.ui.theme.ElectricYellow
-import com.example.ui.theme.NeonCyan
-import com.example.ui.theme.YouTubeRed
 
 @Composable
 fun ShortsStudioPlayer(
@@ -91,507 +71,271 @@ fun ShortsStudioPlayer(
   modifier: Modifier = Modifier
 ) {
   var showTrimControls by remember { mutableStateOf(false) }
-  var isEditingHook by remember { mutableStateOf(false) }
-
   val context = LocalContext.current
-  val totalDuration = clip.durationSeconds.toFloat()
-  val progress = if (totalDuration > 0f) (playbackPositionSec / totalDuration).coerceIn(0f, 1f) else 0f
-
-  // Calculate current active subtitle phrase based on playback position
+  val totalDuration = clip.durationSeconds.toFloat().coerceAtLeast(1f)
+  val progress = (playbackPositionSec / totalDuration).coerceIn(0f, 1f)
   val currentSubtitle = clip.sampleSubtitles.lastOrNull { it.relativeSec <= playbackPositionSec }
     ?: clip.sampleSubtitles.firstOrNull()
-
-  // Pulsing animation for active audio wave
-  val infiniteTransition = rememberInfiniteTransition(label = "wave")
-  val wavePulse by infiniteTransition.animateFloat(
-    initialValue = 0.6f,
-    targetValue = 1.0f,
-    animationSpec = infiniteRepeatable(
-      animation = tween(400, easing = LinearEasing),
-      repeatMode = RepeatMode.Reverse
-    ),
-    label = "wavePulse"
-  )
+  val primary = MaterialTheme.colorScheme.primary
 
   Surface(
     modifier = modifier.fillMaxWidth(),
-    shape = RoundedCornerShape(20.dp),
-    color = MaterialTheme.colorScheme.surface,
-    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.3f))
+    shape = MaterialTheme.shapes.extraLarge,
+    color = MaterialTheme.colorScheme.surfaceContainerLow,
+    tonalElevation = 1.dp,
+    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
   ) {
-    Column(modifier = Modifier.padding(16.dp)) {
-      // Top Studio Header
+    Column(Modifier.padding(16.dp)) {
       Row(
-        modifier = Modifier.fillMaxWidth(),
+        Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
       ) {
-        Column {
-          Row(verticalAlignment = Alignment.CenterVertically) {
-            Surface(
-              shape = RoundedCornerShape(6.dp),
-              color = YouTubeRed
-            ) {
-              Text(
-                text = "9:16 SHORTS",
-                color = Color.White,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Black,
-                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-              )
-            }
-            Spacer(modifier = Modifier.width(8.dp))
-            Text(
-              text = "Live Shorts Studio",
-              style = MaterialTheme.typography.titleMedium,
-              fontWeight = FontWeight.Bold
-            )
-          }
+        Column(Modifier.weight(1f)) {
+          Text("Short preview", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
           Text(
-            text = "${clip.startTimestampFormatted} - ${clip.endTimestampFormatted} (${clip.durationSeconds}s clip)",
+            "${clip.startTimestampFormatted} – ${clip.endTimestampFormatted} • ${clip.durationSeconds}s",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant
           )
         }
-
-        IconButton(
-          onClick = { showTrimControls = !showTrimControls }
-        ) {
-          Icon(
-            imageVector = Icons.Default.Tune,
-            contentDescription = "Fine-tune Trim",
-            tint = if (showTrimControls) YouTubeRed else MaterialTheme.colorScheme.onSurfaceVariant
-          )
+        IconButton(onClick = { showTrimControls = !showTrimControls }) {
+          Icon(Icons.Default.Tune, contentDescription = "Edit trim")
         }
       }
 
-      Spacer(modifier = Modifier.height(12.dp))
+      Spacer(Modifier.height(12.dp))
 
-      // 9:16 Vertical Video Preview Container
-      Box(
-        modifier = Modifier
-          .fillMaxWidth(0.85f)
-          .aspectRatio(9f / 16f)
-          .align(Alignment.CenterHorizontally)
-          .clip(RoundedCornerShape(18.dp))
-          .background(Color.Black)
-          .border(2.dp, YouTubeRed.copy(alpha = 0.5f), RoundedCornerShape(18.dp))
-          .clickable { onTogglePlayPause() }
+      Surface(
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerHighest,
+        tonalElevation = 2.dp,
+        modifier = Modifier.fillMaxWidth()
       ) {
-        val thumbUrl = videoInfo?.thumbnailUrl ?: "https://img.youtube.com/vi/${clip.videoId}/hqdefault.jpg"
+        Column(Modifier.padding(12.dp)) {
+          Text(
+            "Preview uses the source thumbnail. Final export renders the actual video.",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 8.dp)
+          )
 
-        // Framing mode rendering
-        when (framingMode) {
-          FramingMode.CENTER_CROP -> {
-            AsyncImage(
-              model = ImageRequest.Builder(context)
-                .data(thumbUrl)
-                .crossfade(true)
-                .build(),
-              contentDescription = "Shorts Video Frame",
-              contentScale = ContentScale.Crop,
-              modifier = Modifier.fillMaxSize()
-            )
-          }
-          FramingMode.BLUR_BACKGROUND -> {
-            // Blurred background
-            AsyncImage(
-              model = ImageRequest.Builder(context)
-                .data(thumbUrl)
-                .crossfade(true)
-                .build(),
-              contentDescription = null,
-              contentScale = ContentScale.Crop,
-              modifier = Modifier
-                .fillMaxSize()
-                .blur(20.dp)
-            )
-            // Center fit landscape
-            AsyncImage(
-              model = ImageRequest.Builder(context)
-                .data(thumbUrl)
-                .crossfade(true)
-                .build(),
-              contentDescription = "Center Landscape",
-              contentScale = ContentScale.Fit,
-              modifier = Modifier
-                .fillMaxWidth()
-                .align(Alignment.Center)
-            )
-          }
-          FramingMode.SPLIT_SCREEN -> {
-            Column(modifier = Modifier.fillMaxSize()) {
-              AsyncImage(
-                model = ImageRequest.Builder(context)
-                  .data(thumbUrl)
-                  .crossfade(true)
-                  .build(),
-                contentDescription = "Top Video Half",
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                  .weight(1f)
-                  .fillMaxWidth()
-              )
-              Box(
-                modifier = Modifier
-                  .weight(1f)
-                  .fillMaxWidth()
-                  .background(
-                    Brush.verticalGradient(
-                      colors = listOf(Color(0xFF1E1015), Color(0xFF0D0D12))
-                    )
-                  ),
-                contentAlignment = Alignment.Center
-              ) {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                  Icon(
-                    imageVector = Icons.Default.GraphicEq,
-                    contentDescription = null,
-                    tint = NeonCyan,
-                    modifier = Modifier.size(36.dp)
+          Box(
+            modifier = Modifier
+              .fillMaxWidth(0.82f)
+              .aspectRatio(9f / 16f)
+              .align(Alignment.CenterHorizontally)
+              .clip(MaterialTheme.shapes.large)
+              .background(MaterialTheme.colorScheme.scrim)
+              .clickable { onTogglePlayPause() }
+          ) {
+            val thumbUrl = videoInfo?.thumbnailUrl ?: "https://img.youtube.com/vi/${clip.videoId}/hqdefault.jpg"
+            when (framingMode) {
+              FramingMode.CENTER_CROP -> {
+                AsyncImage(
+                  model = ImageRequest.Builder(context).data(thumbUrl).crossfade(true).build(),
+                  contentDescription = "Short preview",
+                  contentScale = ContentScale.Crop,
+                  modifier = Modifier.fillMaxSize()
+                )
+              }
+              FramingMode.BLUR_BACKGROUND -> {
+                AsyncImage(
+                  model = ImageRequest.Builder(context).data(thumbUrl).crossfade(true).build(),
+                  contentDescription = null,
+                  contentScale = ContentScale.Crop,
+                  modifier = Modifier.fillMaxSize().blur(18.dp)
+                )
+                AsyncImage(
+                  model = ImageRequest.Builder(context).data(thumbUrl).crossfade(true).build(),
+                  contentDescription = "Centered preview",
+                  contentScale = ContentScale.Fit,
+                  modifier = Modifier.fillMaxWidth().align(Alignment.Center)
+                )
+              }
+              FramingMode.SPLIT_SCREEN -> {
+                Column(Modifier.fillMaxSize()) {
+                  AsyncImage(
+                    model = ImageRequest.Builder(context).data(thumbUrl).crossfade(true).build(),
+                    contentDescription = "Top preview",
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.weight(1f).fillMaxWidth()
                   )
-                  Text(
-                    text = "AI Voice Track Active",
-                    color = NeonCyan,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold
-                  )
+                  Surface(
+                    modifier = Modifier.weight(1f).fillMaxWidth(),
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                  ) {
+                    Column(Modifier.fillMaxSize(), Arrangement.Center, Alignment.CenterHorizontally) {
+                      Icon(Icons.Default.GraphicEq, contentDescription = null, modifier = Modifier.size(32.dp))
+                      Text("Audio track", style = MaterialTheme.typography.labelMedium)
+                    }
+                  }
                 }
               }
             }
-          }
-        }
 
-        // Top Gradient Shadow & Top Hook Headline Banner
-        Box(
-          modifier = Modifier
-            .fillMaxWidth()
-            .height(110.dp)
-            .background(
-              Brush.verticalGradient(
-                colors = listOf(Color.Black.copy(alpha = 0.85f), Color.Transparent)
+            Surface(
+              modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
+              shape = MaterialTheme.shapes.medium,
+              color = MaterialTheme.colorScheme.inverseSurface,
+              contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+              tonalElevation = 2.dp
+            ) {
+              Text(
+                text = customHookHeadline.ifBlank { clip.hookHeadline },
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
               )
-            )
-            .align(Alignment.TopCenter)
-            .padding(12.dp)
-        ) {
-          Surface(
-            shape = RoundedCornerShape(8.dp),
-            color = YouTubeRed.copy(alpha = 0.92f),
-            modifier = Modifier
-              .align(Alignment.TopCenter)
-              .shadow(8.dp)
-          ) {
-            Text(
-              text = if (customHookHeadline.isNotBlank()) customHookHeadline else clip.hookHeadline,
-              color = Color.White,
-              fontSize = 13.sp,
-              fontWeight = FontWeight.Black,
-              textAlign = TextAlign.Center,
-              modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-            )
-          }
-        }
+            }
 
-        // Dynamic Subtitles Overlay in Center-Bottom of 9:16 Screen
-        if (currentSubtitle != null) {
-          Box(
-            modifier = Modifier
-              .align(Alignment.BottomCenter)
-              .padding(bottom = 60.dp, start = 16.dp, end = 16.dp)
-          ) {
-            when (captionStyle) {
-              CaptionStyle.HORMOZI_BOLD -> {
-                Surface(
-                  shape = RoundedCornerShape(8.dp),
-                  color = Color.Black.copy(alpha = 0.85f),
-                  border = androidx.compose.foundation.BorderStroke(1.5.dp, ElectricYellow)
-                ) {
-                  Text(
-                    text = currentSubtitle.text,
-                    color = ElectricYellow,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Black,
-                    fontFamily = FontFamily.SansSerif,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                  )
+            currentSubtitle?.let { subtitle ->
+              Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 34.dp, start = 12.dp, end = 12.dp),
+                shape = MaterialTheme.shapes.medium,
+                color = when (captionStyle) {
+                  CaptionStyle.HORMOZI_BOLD -> MaterialTheme.colorScheme.inverseSurface
+                  CaptionStyle.NEON_GLOW -> MaterialTheme.colorScheme.secondaryContainer
+                  CaptionStyle.PUNCH_RED -> MaterialTheme.colorScheme.primaryContainer
+                  CaptionStyle.CLEAN_MINIMAL -> MaterialTheme.colorScheme.scrim.copy(alpha = 0.72f)
+                },
+                contentColor = when (captionStyle) {
+                  CaptionStyle.HORMOZI_BOLD -> MaterialTheme.colorScheme.inverseOnSurface
+                  CaptionStyle.NEON_GLOW -> MaterialTheme.colorScheme.onSecondaryContainer
+                  CaptionStyle.PUNCH_RED -> MaterialTheme.colorScheme.onPrimaryContainer
+                  CaptionStyle.CLEAN_MINIMAL -> MaterialTheme.colorScheme.inverseOnSurface
                 }
-              }
-              CaptionStyle.NEON_GLOW -> {
-                Surface(
-                  shape = RoundedCornerShape(10.dp),
-                  color = Color(0xFF001524).copy(alpha = 0.9f),
-                  border = androidx.compose.foundation.BorderStroke(2.dp, NeonCyan)
-                ) {
-                  Text(
-                    text = currentSubtitle.text,
-                    color = NeonCyan,
-                    fontSize = 17.sp,
-                    fontWeight = FontWeight.ExtraBold,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                  )
-                }
-              }
-              CaptionStyle.PUNCH_RED -> {
-                Surface(
-                  shape = RoundedCornerShape(6.dp),
-                  color = BrightCrimson,
-                  shadowElevation = 6.dp
-                ) {
-                  Text(
-                    text = currentSubtitle.text.uppercase(),
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Black,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                  )
-                }
-              }
-              CaptionStyle.CLEAN_MINIMAL -> {
+              ) {
                 Text(
-                  text = currentSubtitle.text,
-                  color = Color.White,
-                  fontSize = 17.sp,
+                  text = if (captionStyle == CaptionStyle.PUNCH_RED) subtitle.text.uppercase() else subtitle.text,
+                  style = MaterialTheme.typography.titleSmall,
                   fontWeight = FontWeight.Bold,
                   textAlign = TextAlign.Center,
-                  modifier = Modifier
-                    .background(Color.Black.copy(alpha = 0.6f), RoundedCornerShape(6.dp))
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                  modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                 )
               }
             }
-          }
-        }
 
-        // Bottom Progress Bar inside video
-        Box(
-          modifier = Modifier
-            .fillMaxWidth()
-            .height(4.dp)
-            .background(Color.White.copy(alpha = 0.3f))
-            .align(Alignment.BottomCenter)
-        ) {
-          Box(
-            modifier = Modifier
-              .fillMaxWidth(progress)
-              .height(4.dp)
-              .background(YouTubeRed)
-          )
-        }
+            Box(
+              Modifier
+                .fillMaxWidth()
+                .height(4.dp)
+                .align(Alignment.BottomCenter)
+                .background(MaterialTheme.colorScheme.surfaceVariant)
+            ) {
+              Box(
+                Modifier
+                  .fillMaxWidth(progress)
+                  .height(4.dp)
+                  .background(primary)
+              )
+            }
 
-        // Center Play / Pause Indicator (shows temporarily when paused)
-        if (!isPlaying) {
-          Box(
-            modifier = Modifier
-              .size(54.dp)
-              .clip(CircleShape)
-              .background(Color.Black.copy(alpha = 0.65f))
-              .align(Alignment.Center),
-            contentAlignment = Alignment.Center
-          ) {
-            Icon(
-              imageVector = Icons.Default.PlayArrow,
-              contentDescription = "Play",
-              tint = Color.White,
-              modifier = Modifier.size(36.dp)
-            )
+            if (!isPlaying) {
+              Surface(
+                modifier = Modifier.size(56.dp).align(Alignment.Center),
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                tonalElevation = 3.dp
+              ) {
+                IconButton(onClick = onTogglePlayPause, modifier = Modifier.fillMaxSize()) {
+                  Icon(Icons.Default.PlayArrow, contentDescription = "Play", modifier = Modifier.size(34.dp))
+                }
+              }
+            }
           }
         }
       }
 
-      Spacer(modifier = Modifier.height(10.dp))
-
-      // Scrubber and Play Controls Bar
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically
-      ) {
-        IconButton(
-          onClick = onTogglePlayPause,
-          modifier = Modifier.size(36.dp)
-        ) {
+      Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        IconButton(onClick = onTogglePlayPause) {
           Icon(
             imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-            contentDescription = if (isPlaying) "Pause" else "Play",
-            tint = YouTubeRed
+            contentDescription = if (isPlaying) "Pause" else "Play"
           )
         }
-
         Slider(
           value = playbackPositionSec,
-          onValueChange = { onSeek(it) },
-          valueRange = 0f..totalDuration.coerceAtLeast(1f),
-          colors = SliderDefaults.colors(
-            thumbColor = YouTubeRed,
-            activeTrackColor = YouTubeRed,
-            inactiveTrackColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.3f)
-          ),
+          onValueChange = onSeek,
+          valueRange = 0f..totalDuration,
+          colors = SliderDefaults.colors(),
           modifier = Modifier.weight(1f)
         )
-
         Text(
-          text = String.format("%02.0fs / %02ds", playbackPositionSec, clip.durationSeconds),
-          fontSize = 12.sp,
-          fontWeight = FontWeight.Bold,
+          String.format("%02.0fs / %02ds", playbackPositionSec, clip.durationSeconds),
+          style = MaterialTheme.typography.labelMedium,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           modifier = Modifier.padding(start = 6.dp)
         )
       }
 
-      // Fine-Tune Trim Controls (Expandable)
-      AnimatedVisibility(visible = showTrimControls) {
+      AnimatedVisibility(showTrimControls) {
         Surface(
-          modifier = Modifier
-            .fillMaxWidth()
-            .padding(top = 8.dp),
-          shape = RoundedCornerShape(12.dp),
-          color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+          modifier = Modifier.fillMaxWidth(),
+          shape = MaterialTheme.shapes.large,
+          color = MaterialTheme.colorScheme.surfaceContainerHighest
         ) {
-          Column(modifier = Modifier.padding(12.dp)) {
-            Text(
-              text = "✂️ Fine-Tune Clip Timestamps (10s - 30s)",
-              style = MaterialTheme.typography.labelMedium,
-              fontWeight = FontWeight.Bold
-            )
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.SpaceBetween,
-              verticalAlignment = Alignment.CenterVertically
-            ) {
-              Text(
-                text = "Start: ${clip.startTimestampFormatted} (${clip.startSeconds}s)",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-              )
+          Column(Modifier.padding(12.dp)) {
+            Text("Fine-tune trim", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(8.dp))
+            Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+              Text("Start ${clip.startTimestampFormatted}", style = MaterialTheme.typography.bodySmall)
               Row {
-                Surface(
-                  onClick = { onTrimUpdated((clip.startSeconds - 1).coerceAtLeast(0), clip.endSeconds) },
-                  shape = RoundedCornerShape(6.dp),
-                  color = MaterialTheme.colorScheme.surface,
-                  modifier = Modifier.padding(end = 4.dp)
-                ) {
-                  Text("-1s", fontSize = 11.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-                }
-                Surface(
-                  onClick = { onTrimUpdated(clip.startSeconds + 1, clip.endSeconds) },
-                  shape = RoundedCornerShape(6.dp),
-                  color = MaterialTheme.colorScheme.surface
-                ) {
-                  Text("+1s", fontSize = 11.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-                }
+                FilterChip(selected = false, onClick = { onTrimUpdated((clip.startSeconds - 1).coerceAtLeast(0), clip.endSeconds) }, label = { Text("−1s") })
+                Spacer(Modifier.width(6.dp))
+                FilterChip(selected = false, onClick = { onTrimUpdated(clip.startSeconds + 1, clip.endSeconds) }, label = { Text("+1s") })
               }
             }
-
-            Spacer(modifier = Modifier.height(6.dp))
-
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.SpaceBetween,
-              verticalAlignment = Alignment.CenterVertically
-            ) {
-              Text(
-                text = "End: ${clip.endTimestampFormatted} (${clip.endSeconds}s)",
-                fontSize = 12.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-              )
+            Spacer(Modifier.height(6.dp))
+            Row(Modifier.fillMaxWidth(), Arrangement.SpaceBetween, Alignment.CenterVertically) {
+              Text("End ${clip.endTimestampFormatted}", style = MaterialTheme.typography.bodySmall)
               Row {
-                Surface(
-                  onClick = { onTrimUpdated(clip.startSeconds, (clip.endSeconds - 1).coerceAtLeast(clip.startSeconds + 10)) },
-                  shape = RoundedCornerShape(6.dp),
-                  color = MaterialTheme.colorScheme.surface,
-                  modifier = Modifier.padding(end = 4.dp)
-                ) {
-                  Text("-1s", fontSize = 11.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-                }
-                Surface(
-                  onClick = { onTrimUpdated(clip.startSeconds, (clip.endSeconds + 1).coerceAtMost(clip.startSeconds + 30)) },
-                  shape = RoundedCornerShape(6.dp),
-                  color = MaterialTheme.colorScheme.surface
-                ) {
-                  Text("+1s", fontSize = 11.sp, modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
-                }
+                FilterChip(selected = false, onClick = { onTrimUpdated(clip.startSeconds, (clip.endSeconds - 1).coerceAtLeast(clip.startSeconds + 10)) }, label = { Text("−1s") })
+                Spacer(Modifier.width(6.dp))
+                FilterChip(selected = false, onClick = { onTrimUpdated(clip.startSeconds, (clip.endSeconds + 1).coerceAtMost(clip.startSeconds + 30)) }, label = { Text("+1s") })
               }
             }
           }
         }
       }
 
-      Spacer(modifier = Modifier.height(12.dp))
-
-      // Customization Controls: Caption Styles
-      Text(
-        text = "Caption Overlay Style",
-        style = MaterialTheme.typography.labelMedium,
-        fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.onSurface
-      )
-
-      Row(
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(top = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
-      ) {
+      Spacer(Modifier.height(12.dp))
+      Text("Caption style", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         CaptionStyle.entries.forEach { style ->
           FilterChip(
             selected = captionStyle == style,
             onClick = { onCaptionStyleChanged(style) },
             label = { Text(style.displayName, fontSize = 11.sp) },
-            colors = FilterChipDefaults.filterChipColors(
-              selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-              selectedLabelColor = MaterialTheme.colorScheme.primary
-            ),
             modifier = Modifier.weight(1f)
           )
         }
       }
 
-      Spacer(modifier = Modifier.height(8.dp))
-
-      // Framing Modes Selector
-      Text(
-        text = "Video Framing Mode",
-        style = MaterialTheme.typography.labelMedium,
-        fontWeight = FontWeight.Bold,
-        color = MaterialTheme.colorScheme.onSurface
-      )
-
-      Row(
-        modifier = Modifier
-          .fillMaxWidth()
-          .padding(top = 4.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
-      ) {
+      Spacer(Modifier.height(8.dp))
+      Text("Framing", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         FramingMode.entries.forEach { mode ->
           FilterChip(
             selected = framingMode == mode,
             onClick = { onFramingModeChanged(mode) },
             label = { Text(mode.displayName, fontSize = 11.sp) },
-            colors = FilterChipDefaults.filterChipColors(
-              selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
-              selectedLabelColor = MaterialTheme.colorScheme.primary
-            ),
             modifier = Modifier.weight(1f)
           )
         }
       }
 
-      Spacer(modifier = Modifier.height(8.dp))
-
-      // Editable Hook Headline input
+      Spacer(Modifier.height(8.dp))
       OutlinedTextField(
         value = customHookHeadline,
         onValueChange = onHookHeadlineChanged,
-        label = { Text("Top Hook Banner Text") },
-        placeholder = { Text("e.g. PART 1 • THE CRAZIEST START 🤯") },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier.fillMaxWidth(),
+        label = { Text("Hook headline") },
+        placeholder = { Text("Add a short hook") },
+        singleLine = true
       )
     }
   }
