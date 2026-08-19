@@ -17,8 +17,8 @@ android {
     applicationId = "com.aistudio.shortscut.vpxqla"
     minSdk = 24
     targetSdk = 36
-    versionCode = 22
-    versionName = "2.2"
+    versionCode = 23
+    versionName = "2.3"
     buildConfigField("String", "BACKEND_BASE_URL", "\"https://shorts-maker-stis.onrender.com\"")
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
@@ -99,6 +99,7 @@ dependencies {
   implementation(libs.retrofit)
   implementation(libs.androidx.media3.exoplayer)
   implementation(libs.androidx.media3.ui)
+  implementation(libs.androidx.work.runtime)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
