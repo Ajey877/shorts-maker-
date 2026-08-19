@@ -16,6 +16,7 @@ import com.example.model.YouTubeVideoInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -26,6 +27,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
+import kotlin.coroutines.resume
 
 class ClipMintBackendService {
     private val client = OkHttpClient.Builder()
@@ -185,6 +187,44 @@ class ClipMintBackendService {
             }
         }
         return jobId
+    }
+
+    fun enqueueBatchDownload(
+        context: Context,
+        videoUrl: String,
+        clips: List<ShortClip>,
+        onProgress: (Float) -> Unit = {},
+        onComplete: () -> Unit = {},
+        onError: (String) -> Unit = {}
+    ): Long? {
+        if (baseUrl.contains("REPLACE", ignoreCase = true) || clips.isEmpty()) return null
+        val batchId = System.currentTimeMillis()
+        CoroutineScope(Dispatchers.IO).launch {
+            for ((index, clip) in clips.withIndex()) {
+                val succeeded = suspendCancellableCoroutine<Boolean> { continuation ->
+                    enqueueDownload(
+                        context = context,
+                        videoUrl = videoUrl,
+                        clip = clip,
+                        onProgress = { clipProgress ->
+                            postProgress(onProgress, ((index + clipProgress) / clips.size).coerceIn(0f, 1f))
+                        },
+                        onComplete = { if (continuation.isActive) continuation.resume(true) },
+                        onError = { if (continuation.isActive) continuation.resume(false) }
+                    )
+                }
+                if (!succeeded) {
+                    Handler(Looper.getMainLooper()).post { onError("Batch export stopped at Short #${clip.clipIndex}.") }
+                    return@launch
+                }
+            }
+            Handler(Looper.getMainLooper()).post {
+                onProgress(1f)
+                Toast.makeText(context, "All ${clips.size} Shorts saved to Downloads/ClipMint", Toast.LENGTH_LONG).show()
+                onComplete()
+            }
+        }
+        return batchId
     }
 
     private fun postProgress(onProgress: (Float) -> Unit, value: Float) {
