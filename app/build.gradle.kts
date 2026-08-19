@@ -17,8 +17,8 @@ android {
     applicationId = "com.aistudio.shortscut.vpxqla"
     minSdk = 24
     targetSdk = 36
-    versionCode = 21
-    versionName = "2.1"
+    versionCode = 22
+    versionName = "2.2"
     buildConfigField("String", "BACKEND_BASE_URL", "\"https://shorts-maker-stis.onrender.com\"")
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
