@@ -1,6 +1,7 @@
 package com.example
 
 import android.os.Bundle
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -10,13 +11,11 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -25,10 +24,12 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.outlined.Bookmarks
 import androidx.compose.material.icons.outlined.SmartDisplay
+import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
@@ -37,7 +38,6 @@ import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -47,18 +47,17 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.example.model.ShortClip
+import com.example.data.remote.ClipMintBackendService
 import com.example.ui.ShortsViewModel
 import com.example.ui.components.ExportUploadDialog
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.theme.BrightCrimson
 import com.example.ui.theme.MyApplicationTheme
-import com.example.ui.theme.YouTubeRed
 
 class MainActivity : ComponentActivity() {
-
   private val viewModel: ShortsViewModel by viewModels()
+  private val backendService = ClipMintBackendService()
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -86,12 +85,7 @@ class MainActivity : ComponentActivity() {
                     contentDescription = "Studio"
                   )
                 },
-                label = {
-                  Text(
-                    text = "Shorts Studio",
-                    fontWeight = if (uiState.activeTab == 0) FontWeight.Bold else FontWeight.Normal
-                  )
-                },
+                label = { Text("Shorts Studio", fontWeight = if (uiState.activeTab == 0) FontWeight.Bold else FontWeight.Normal) },
                 colors = NavigationBarItemDefaults.colors(
                   selectedIconColor = MaterialTheme.colorScheme.primary,
                   selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -100,7 +94,6 @@ class MainActivity : ComponentActivity() {
                   unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
               )
-
               NavigationBarItem(
                 selected = uiState.activeTab == 1,
                 onClick = { viewModel.setActiveTab(1) },
@@ -110,12 +103,7 @@ class MainActivity : ComponentActivity() {
                     contentDescription = "Library"
                   )
                 },
-                label = {
-                  Text(
-                    text = "Saved (${savedClips.size})",
-                    fontWeight = if (uiState.activeTab == 1) FontWeight.Bold else FontWeight.Normal
-                  )
-                },
+                label = { Text("Saved (${savedClips.size})", fontWeight = if (uiState.activeTab == 1) FontWeight.Bold else FontWeight.Normal) },
                 colors = NavigationBarItemDefaults.colors(
                   selectedIconColor = MaterialTheme.colorScheme.primary,
                   selectedTextColor = MaterialTheme.colorScheme.primary,
@@ -133,61 +121,86 @@ class MainActivity : ComponentActivity() {
               .padding(innerPadding)
           ) {
             when (uiState.activeTab) {
-              0 -> {
-                HomeScreen(
-                  urlInput = uiState.urlInput,
-                  isAnalyzing = uiState.isAnalyzing,
-                  analysisStatusText = uiState.analysisStatusText,
-                  currentVideo = uiState.currentVideo,
-                  clips = uiState.clips,
-                  selectedClip = uiState.selectedClip,
-                  retentionPoints = uiState.retentionPoints,
-                  isPlaying = uiState.isPlaying,
-                  playbackPositionSec = uiState.playbackPositionSec,
-                  captionStyle = uiState.captionStyle,
-                  framingMode = uiState.framingMode,
-                  customHookHeadline = uiState.customHookHeadline,
-                  savedClipsCount = savedClips.size,
-                  onUrlInputChanged = { viewModel.onUrlInputChanged(it) },
-                  onAnalyzeClicked = { viewModel.analyzeVideo() },
-                  onLoadPreset = { viewModel.loadPreset(it) },
-                  onSelectClip = { viewModel.selectClip(it) },
-                  onTogglePlayPause = { viewModel.togglePlayPause() },
-                  onSeek = { viewModel.seekTo(it) },
-                  onCaptionStyleChanged = { viewModel.setCaptionStyle(it) },
-                  onFramingModeChanged = { viewModel.setFramingMode(it) },
-                  onHookHeadlineChanged = { viewModel.onCustomHookChanged(it) },
-                  onTrimUpdated = { start, end -> viewModel.updateClipTrim(start, end) },
-                  onSaveClip = { viewModel.saveCurrentClip() },
-                  onCopyMetadata = { clip -> viewModel.copyShortsMetadata(context, clip) },
-                  onUploadShorts = { clip ->
-                    viewModel.selectClip(clip)
-                    viewModel.setUploadDialogVisible(true)
-                  },
-                  onShareClip = { clip -> viewModel.shareShortsClip(context, clip) },
-                  onOpenLibrary = { viewModel.setActiveTab(1) }
-                )
-              }
-              1 -> {
-                LibraryScreen(
-                  savedClips = savedClips,
-                  onSelectAndPreviewClip = { clip ->
-                    viewModel.selectClip(clip)
-                    viewModel.setActiveTab(0)
-                  },
-                  onCopyMetadata = { clip -> viewModel.copyShortsMetadata(context, clip) },
-                  onOpenYouTubeShorts = { clip ->
-                    viewModel.selectClip(clip)
-                    viewModel.setUploadDialogVisible(true)
-                  },
-                  onTogglePostedStatus = { id, isPosted -> viewModel.togglePostedStatus(id, isPosted) },
-                  onDeleteClip = { id -> viewModel.deleteSavedClip(id) },
-                  onGoToStudio = { viewModel.setActiveTab(0) }
-                )
+              0 -> HomeScreen(
+                urlInput = uiState.urlInput,
+                isAnalyzing = uiState.isAnalyzing,
+                analysisStatusText = uiState.analysisStatusText,
+                currentVideo = uiState.currentVideo,
+                clips = uiState.clips,
+                selectedClip = uiState.selectedClip,
+                retentionPoints = uiState.retentionPoints,
+                isPlaying = uiState.isPlaying,
+                playbackPositionSec = uiState.playbackPositionSec,
+                captionStyle = uiState.captionStyle,
+                framingMode = uiState.framingMode,
+                customHookHeadline = uiState.customHookHeadline,
+                savedClipsCount = savedClips.size,
+                onUrlInputChanged = { viewModel.onUrlInputChanged(it) },
+                onAnalyzeClicked = { viewModel.analyzeVideo() },
+                onLoadPreset = { viewModel.loadPreset(it) },
+                onSelectClip = { viewModel.selectClip(it) },
+                onTogglePlayPause = { viewModel.togglePlayPause() },
+                onSeek = { viewModel.seekTo(it) },
+                onCaptionStyleChanged = { viewModel.setCaptionStyle(it) },
+                onFramingModeChanged = { viewModel.setFramingMode(it) },
+                onHookHeadlineChanged = { viewModel.onCustomHookChanged(it) },
+                onTrimUpdated = { start, end -> viewModel.updateClipTrim(start, end) },
+                onSaveClip = { viewModel.saveCurrentClip() },
+                onCopyMetadata = { clip -> viewModel.copyShortsMetadata(context, clip) },
+                onUploadShorts = { clip ->
+                  viewModel.selectClip(clip)
+                  viewModel.setUploadDialogVisible(true)
+                },
+                onShareClip = { clip -> viewModel.shareShortsClip(context, clip) },
+                onOpenLibrary = { viewModel.setActiveTab(1) }
+              )
+              1 -> LibraryScreen(
+                savedClips = savedClips,
+                onSelectAndPreviewClip = { clip ->
+                  viewModel.selectClip(clip)
+                  viewModel.setActiveTab(0)
+                },
+                onCopyMetadata = { clip -> viewModel.copyShortsMetadata(context, clip) },
+                onOpenYouTubeShorts = { clip ->
+                  viewModel.selectClip(clip)
+                  viewModel.setUploadDialogVisible(true)
+                },
+                onTogglePostedStatus = { id, isPosted -> viewModel.togglePostedStatus(id, isPosted) },
+                onDeleteClip = { id -> viewModel.deleteSavedClip(id) },
+                onGoToStudio = { viewModel.setActiveTab(0) }
+              )
+            }
+
+            val downloadVideo = uiState.currentVideo
+            val downloadClip = uiState.selectedClip
+            if (uiState.activeTab == 0 && downloadClip != null && downloadVideo != null) {
+              FloatingActionButton(
+                onClick = {
+                  val jobId = backendService.enqueueDownload(context, downloadVideo.url, downloadClip)
+                  if (jobId != null) {
+                    Toast.makeText(
+                      context,
+                      "Rendering Short #${downloadClip.clipIndex}. Check Downloads when complete.",
+                      Toast.LENGTH_LONG
+                    ).show()
+                  } else {
+                    Toast.makeText(
+                      context,
+                      "Connect the app to the free Render backend first.",
+                      Toast.LENGTH_LONG
+                    ).show()
+                  }
+                },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier
+                  .align(Alignment.BottomEnd)
+                  .padding(end = 18.dp, bottom = 18.dp)
+              ) {
+                Icon(Icons.Default.Download, contentDescription = "Download selected Short")
               }
             }
 
-            // Notification Banner Overlay
             AnimatedVisibility(
               visible = uiState.bannerNotification != null,
               enter = slideInVertically { -it } + fadeIn(),
@@ -197,43 +210,27 @@ class MainActivity : ComponentActivity() {
                 .padding(top = 16.dp, start = 20.dp, end = 20.dp)
             ) {
               uiState.bannerNotification?.let { msg ->
-                Surface(
-                  shape = RoundedCornerShape(12.dp),
-                  color = BrightCrimson,
-                  shadowElevation = 8.dp
-                ) {
+                Surface(shape = RoundedCornerShape(12.dp), color = BrightCrimson, shadowElevation = 8.dp) {
                   Row(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                   ) {
-                    Icon(
-                      imageVector = Icons.Default.Info,
-                      contentDescription = null,
-                      tint = Color.White,
-                      modifier = Modifier.size(18.dp)
-                    )
+                    Icon(Icons.Default.Info, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                      text = msg,
-                      color = Color.White,
-                      fontSize = 13.sp,
-                      fontWeight = FontWeight.Bold
-                    )
+                    Text(msg, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                   }
                 }
               }
             }
 
-            // Export & Upload Modal Dialog
-            if (uiState.showUploadDialog && uiState.selectedClip != null) {
+            val dialogClip = uiState.selectedClip
+            if (uiState.showUploadDialog && dialogClip != null) {
               ExportUploadDialog(
-                clip = uiState.selectedClip!!,
+                clip = dialogClip,
                 onDismiss = { viewModel.setUploadDialogVisible(false) },
-                onCopyMetadata = { viewModel.copyShortsMetadata(context, uiState.selectedClip!!) },
-                onOpenYouTubeShorts = { viewModel.openYouTubeShortsUpload(context, uiState.selectedClip!!) },
-                onMarkPosted = {
-                  viewModel.togglePostedStatus(uiState.selectedClip!!.id, true)
-                }
+                onCopyMetadata = { viewModel.copyShortsMetadata(context, dialogClip) },
+                onOpenYouTubeShorts = { viewModel.openYouTubeShortsUpload(context, dialogClip) },
+                onMarkPosted = { viewModel.togglePostedStatus(dialogClip.id, true) }
               )
             }
           }
@@ -242,4 +239,3 @@ class MainActivity : ComponentActivity() {
     }
   }
 }
-
