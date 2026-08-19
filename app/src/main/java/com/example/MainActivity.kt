@@ -6,22 +6,17 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.viewModels
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Download
@@ -31,14 +26,18 @@ import androidx.compose.material.icons.outlined.Bookmarks
 import androidx.compose.material.icons.outlined.SmartDisplay
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -61,77 +60,74 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
     setContent {
-      MyApplicationTheme {
+      MyApplicationTheme(darkTheme = isSystemInDarkTheme(), dynamicColor = true) {
         val uiState by viewModel.uiState.collectAsStateWithLifecycle()
         val savedClips by viewModel.savedClips.collectAsStateWithLifecycle()
         val context = LocalContext.current
+        var isRendering by remember { mutableStateOf(false) }
+        var renderProgress by remember { mutableFloatStateOf(0f) }
+
+        val selectedClip = uiState.selectedClip
+        val currentVideo = uiState.currentVideo
+        val previewUrl = if (selectedClip != null && currentVideo != null) {
+          backendService.previewUrl(currentVideo.url, selectedClip)
+        } else null
 
         Scaffold(
           modifier = Modifier.fillMaxSize(),
           bottomBar = {
             NavigationBar(
-              containerColor = MaterialTheme.colorScheme.surfaceContainer,
-              contentColor = MaterialTheme.colorScheme.onSurface,
-              modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)
+              modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars),
+              containerColor = MaterialTheme.colorScheme.surfaceContainer
             ) {
               NavigationBarItem(
                 selected = uiState.activeTab == 0,
                 onClick = { viewModel.setActiveTab(0) },
-                icon = {
-                  Icon(
-                    imageVector = if (uiState.activeTab == 0) Icons.Filled.SmartDisplay else Icons.Outlined.SmartDisplay,
-                    contentDescription = "Studio"
-                  )
-                },
-                label = { Text("Studio", fontWeight = if (uiState.activeTab == 0) FontWeight.Bold else FontWeight.Normal) },
-                colors = NavigationBarItemDefaults.colors()
+                icon = { Icon(if (uiState.activeTab == 0) Icons.Filled.SmartDisplay else Icons.Outlined.SmartDisplay, contentDescription = "Studio") },
+                label = { Text("Studio", fontWeight = if (uiState.activeTab == 0) FontWeight.Bold else FontWeight.Normal) }
               )
               NavigationBarItem(
                 selected = uiState.activeTab == 1,
                 onClick = { viewModel.setActiveTab(1) },
-                icon = {
-                  Icon(
-                    imageVector = if (uiState.activeTab == 1) Icons.Filled.Bookmarks else Icons.Outlined.Bookmarks,
-                    contentDescription = "Library"
-                  )
-                },
-                label = { Text("Library", fontWeight = if (uiState.activeTab == 1) FontWeight.Bold else FontWeight.Normal) },
-                colors = NavigationBarItemDefaults.colors()
+                icon = { Icon(if (uiState.activeTab == 1) Icons.Filled.Bookmarks else Icons.Outlined.Bookmarks, contentDescription = "Library") },
+                label = { Text("Library", fontWeight = if (uiState.activeTab == 1) FontWeight.Bold else FontWeight.Normal) }
               )
             }
           }
         ) { innerPadding ->
-          Box(
-            modifier = Modifier
-              .fillMaxSize()
-              .padding(innerPadding)
-          ) {
+          Box(Modifier.fillMaxSize().padding(innerPadding)) {
             when (uiState.activeTab) {
               0 -> HomeScreen(
                 urlInput = uiState.urlInput,
+                clipCount = uiState.clipCount,
+                clipLength = uiState.clipLength,
                 isAnalyzing = uiState.isAnalyzing,
                 analysisStatusText = uiState.analysisStatusText,
-                currentVideo = uiState.currentVideo,
+                transcriptAvailable = uiState.transcriptAvailable,
+                currentVideo = currentVideo,
                 clips = uiState.clips,
-                selectedClip = uiState.selectedClip,
+                selectedClip = selectedClip,
                 retentionPoints = uiState.retentionPoints,
                 isPlaying = uiState.isPlaying,
                 playbackPositionSec = uiState.playbackPositionSec,
                 captionStyle = uiState.captionStyle,
                 framingMode = uiState.framingMode,
                 customHookHeadline = uiState.customHookHeadline,
+                previewUrl = previewUrl,
                 savedClipsCount = savedClips.size,
-                onUrlInputChanged = { viewModel.onUrlInputChanged(it) },
-                onAnalyzeClicked = { viewModel.analyzeVideo() },
-                onLoadPreset = { viewModel.loadPreset(it) },
-                onSelectClip = { viewModel.selectClip(it) },
-                onTogglePlayPause = { viewModel.togglePlayPause() },
-                onSeek = { viewModel.seekTo(it) },
-                onCaptionStyleChanged = { viewModel.setCaptionStyle(it) },
-                onFramingModeChanged = { viewModel.setFramingMode(it) },
-                onHookHeadlineChanged = { viewModel.onCustomHookChanged(it) },
-                onTrimUpdated = { start, end -> viewModel.updateClipTrim(start, end) },
-                onSaveClip = { viewModel.saveCurrentClip() },
+                onUrlInputChanged = viewModel::onUrlInputChanged,
+                onClipCountChanged = viewModel::setClipCount,
+                onClipLengthChanged = viewModel::setClipLength,
+                onAnalyzeClicked = viewModel::analyzeVideo,
+                onLoadPreset = viewModel::loadPreset,
+                onSelectClip = viewModel::selectClip,
+                onSetPlaying = viewModel::setPlaying,
+                onSetPlaybackPosition = viewModel::setPlaybackPosition,
+                onCaptionStyleChanged = viewModel::setCaptionStyle,
+                onFramingModeChanged = viewModel::setFramingMode,
+                onHookHeadlineChanged = viewModel::onCustomHookChanged,
+                onTrimUpdated = viewModel::updateClipTrim,
+                onSaveClip = viewModel::saveCurrentClip,
                 onCopyMetadata = { clip -> viewModel.copyShortsMetadata(context, clip) },
                 onUploadShorts = { clip ->
                   viewModel.selectClip(clip)
@@ -151,69 +147,79 @@ class MainActivity : ComponentActivity() {
                   viewModel.selectClip(clip)
                   viewModel.setUploadDialogVisible(true)
                 },
-                onTogglePostedStatus = { id, isPosted -> viewModel.togglePostedStatus(id, isPosted) },
-                onDeleteClip = { id -> viewModel.deleteSavedClip(id) },
+                onTogglePostedStatus = viewModel::togglePostedStatus,
+                onDeleteClip = viewModel::deleteSavedClip,
                 onGoToStudio = { viewModel.setActiveTab(0) }
               )
             }
 
-            val downloadVideo = uiState.currentVideo
-            val downloadClip = uiState.selectedClip
-            if (uiState.activeTab == 0 && downloadClip != null && downloadVideo != null) {
+            if (uiState.activeTab == 0 && selectedClip != null && currentVideo != null && !isRendering) {
               FloatingActionButton(
                 onClick = {
-                  val jobId = backendService.enqueueDownload(context, downloadVideo.url, downloadClip)
-                  if (jobId != null) {
-                    Toast.makeText(context, "Rendering Short #${downloadClip.clipIndex}…", Toast.LENGTH_LONG).show()
-                  } else {
+                  isRendering = true
+                  renderProgress = 0f
+                  val jobId = backendService.enqueueDownload(
+                    context = context,
+                    videoUrl = currentVideo.url,
+                    clip = selectedClip,
+                    onProgress = { renderProgress = it },
+                    onComplete = { isRendering = false; renderProgress = 1f },
+                    onError = { isRendering = false }
+                  )
+                  if (jobId == null) {
+                    isRendering = false
                     Toast.makeText(context, "Render service is not configured.", Toast.LENGTH_LONG).show()
                   }
                 },
-                containerColor = MaterialTheme.colorScheme.primaryContainer,
-                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                modifier = Modifier
-                  .align(Alignment.BottomEnd)
-                  .padding(16.dp)
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
               ) {
-                Icon(Icons.Default.Download, contentDescription = "Download selected Short")
+                Icon(Icons.Default.Download, contentDescription = "Export selected Short")
               }
             }
 
-            AnimatedVisibility(
-              visible = uiState.bannerNotification != null,
-              enter = slideInVertically { -it } + fadeIn(),
-              exit = slideOutVertically { -it } + fadeOut(),
-              modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(top = 8.dp, start = 16.dp, end = 16.dp)
-            ) {
-              uiState.bannerNotification?.let { msg ->
-                Surface(
-                  shape = RoundedCornerShape(16.dp),
-                  color = MaterialTheme.colorScheme.inverseSurface,
-                  tonalElevation = 3.dp,
-                  shadowElevation = 4.dp
-                ) {
-                  Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                  ) {
-                    Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.inverseOnSurface, modifier = Modifier.size(18.dp))
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(msg, color = MaterialTheme.colorScheme.inverseOnSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            if (isRendering) {
+              Surface(
+                modifier = Modifier.align(Alignment.BottomCenter).padding(horizontal = 16.dp, vertical = 12.dp),
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.surfaceContainerHighest,
+                tonalElevation = 3.dp
+              ) {
+                Column(Modifier.padding(14.dp)) {
+                  Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.Download, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
+                    Text("Rendering Short…", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
+                    Text(" ${(renderProgress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 8.dp))
                   }
+                  LinearProgressIndicator(progress = { renderProgress }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                  Text("Keep ClipMint open until the download finishes.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
                 }
               }
             }
 
-            val dialogClip = uiState.selectedClip
-            if (uiState.showUploadDialog && dialogClip != null) {
+            uiState.bannerNotification?.let { msg ->
+              Surface(
+                modifier = Modifier.align(Alignment.TopCenter).padding(12.dp),
+                shape = MaterialTheme.shapes.large,
+                color = MaterialTheme.colorScheme.inverseSurface,
+                contentColor = MaterialTheme.colorScheme.inverseOnSurface,
+                tonalElevation = 3.dp
+              ) {
+                Row(Modifier.padding(horizontal = 14.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                  Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(18.dp))
+                  Text(msg, style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(start = 8.dp))
+                }
+              }
+            }
+
+            if (uiState.showUploadDialog && selectedClip != null) {
               ExportUploadDialog(
-                clip = dialogClip,
+                clip = selectedClip,
                 onDismiss = { viewModel.setUploadDialogVisible(false) },
-                onCopyMetadata = { viewModel.copyShortsMetadata(context, dialogClip) },
-                onOpenYouTubeShorts = { viewModel.openYouTubeShortsUpload(context, dialogClip) },
-                onMarkPosted = { viewModel.togglePostedStatus(dialogClip.id, true) }
+                onCopyMetadata = { viewModel.copyShortsMetadata(context, selectedClip) },
+                onOpenYouTubeShorts = { viewModel.openYouTubeShortsUpload(context, selectedClip) },
+                onMarkPosted = { viewModel.togglePostedStatus(selectedClip.id, true) }
               )
             }
           }
