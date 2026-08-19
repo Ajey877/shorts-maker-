@@ -1,9 +1,7 @@
 package com.example.ui.components
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -14,14 +12,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmark
 import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.LocalFireDepartment
-import androidx.compose.material.icons.filled.PlayCircle
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Upload
 import androidx.compose.material3.Button
@@ -32,13 +28,11 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -46,8 +40,6 @@ import androidx.compose.ui.unit.sp
 import com.example.model.ShortClip
 import com.example.ui.theme.AmberGlow
 import com.example.ui.theme.BrightCrimson
-import com.example.ui.theme.GeoPurple
-import com.example.ui.theme.GeoPurpleLight
 import com.example.ui.theme.YouTubeRed
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -76,7 +68,6 @@ fun ClipCard(
     elevation = CardDefaults.cardElevation(defaultElevation = elevation)
   ) {
     Column(modifier = Modifier.padding(16.dp)) {
-      // Top row: Clip badge, Virality score, Bookmark
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -114,7 +105,7 @@ fun ClipCard(
               )
               Spacer(modifier = Modifier.width(4.dp))
               Text(
-                text = "${clip.viralityScore}% Peak Retention",
+                text = "${clip.viralityScore}% AI Selection Score",
                 color = AmberGlow,
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold
@@ -139,7 +130,6 @@ fun ClipCard(
 
       Spacer(modifier = Modifier.height(10.dp))
 
-      // Viral Title
       Text(
         text = clip.title,
         style = MaterialTheme.typography.titleMedium,
@@ -147,7 +137,6 @@ fun ClipCard(
         color = MaterialTheme.colorScheme.onSurface
       )
 
-      // Hook Banner preview
       Surface(
         modifier = Modifier
           .fillMaxWidth()
@@ -175,7 +164,6 @@ fun ClipCard(
         }
       }
 
-      // Why Viral reason
       Text(
         text = clip.whyViralReason,
         style = MaterialTheme.typography.bodySmall,
@@ -185,7 +173,6 @@ fun ClipCard(
 
       Spacer(modifier = Modifier.height(8.dp))
 
-      // Hashtags
       FlowRow(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -209,52 +196,27 @@ fun ClipCard(
 
       Spacer(modifier = Modifier.height(14.dp))
 
-      // Action Buttons
       Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
       ) {
-        // Upload to YouTube Shorts Button
         Button(
           onClick = onUploadShorts,
-          colors = ButtonDefaults.buttonColors(
-            containerColor = YouTubeRed,
-            contentColor = Color.White
-          ),
+          colors = ButtonDefaults.buttonColors(containerColor = YouTubeRed, contentColor = Color.White),
           shape = RoundedCornerShape(12.dp),
           modifier = Modifier.weight(1f)
         ) {
-          Icon(
-            imageVector = Icons.Default.Upload,
-            contentDescription = null,
-            modifier = Modifier.size(16.dp)
-          )
+          Icon(Icons.Default.Upload, contentDescription = null, modifier = Modifier.size(16.dp))
           Spacer(modifier = Modifier.width(6.dp))
-          Text(
-            text = "Post to Shorts",
-            fontSize = 12.sp,
-            fontWeight = FontWeight.Bold
-          )
+          Text(text = "Post to Shorts", fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
 
-        // Copy Metadata
-        FilledTonalButton(
-          onClick = onCopyMetadata,
-          shape = RoundedCornerShape(12.dp)
-        ) {
-          Icon(
-            imageVector = Icons.Default.ContentCopy,
-            contentDescription = "Copy Metadata",
-            modifier = Modifier.size(16.dp)
-          )
+        FilledTonalButton(onClick = onCopyMetadata, shape = RoundedCornerShape(12.dp)) {
+          Icon(Icons.Default.ContentCopy, contentDescription = "Copy Metadata", modifier = Modifier.size(16.dp))
         }
 
-        // Save Clip
-        FilledTonalButton(
-          onClick = onSaveClip,
-          shape = RoundedCornerShape(12.dp)
-        ) {
+        FilledTonalButton(onClick = onSaveClip, shape = RoundedCornerShape(12.dp)) {
           Icon(
             imageVector = if (clip.isSaved) Icons.Default.Bookmark else Icons.Default.BookmarkBorder,
             contentDescription = "Save Clip",
@@ -263,17 +225,8 @@ fun ClipCard(
           )
         }
 
-        // Share
-        IconButton(
-          onClick = onShare,
-          modifier = Modifier.size(36.dp)
-        ) {
-          Icon(
-            imageVector = Icons.Default.Share,
-            contentDescription = "Share",
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(18.dp)
-          )
+        IconButton(onClick = onShare, modifier = Modifier.size(36.dp)) {
+          Icon(Icons.Default.Share, contentDescription = "Share", tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(18.dp))
         }
       }
     }
