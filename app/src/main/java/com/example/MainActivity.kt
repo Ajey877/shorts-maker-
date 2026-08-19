@@ -64,6 +64,7 @@ class MainActivity : ComponentActivity() {
         val savedClips by viewModel.savedClips.collectAsStateWithLifecycle()
         val context = LocalContext.current
         var isRendering by remember { mutableStateOf(false) }
+        var renderingBatch by remember { mutableStateOf(false) }
         var renderProgress by remember { mutableFloatStateOf(0f) }
 
         val selectedClip = uiState.selectedClip
@@ -133,6 +134,26 @@ class MainActivity : ComponentActivity() {
                   viewModel.setUploadDialogVisible(true)
                 },
                 onShareClip = { clip -> viewModel.shareShortsClip(context, clip) },
+                onExportAll = {
+                  if (currentVideo != null && uiState.clips.isNotEmpty() && !isRendering) {
+                    isRendering = true
+                    renderingBatch = true
+                    renderProgress = 0f
+                    val batchId = backendService.enqueueBatchDownload(
+                      context = context,
+                      videoUrl = currentVideo.url,
+                      clips = uiState.clips.take(uiState.clipCount),
+                      onProgress = { renderProgress = it },
+                      onComplete = { isRendering = false; renderingBatch = false; renderProgress = 1f },
+                      onError = { message -> isRendering = false; renderingBatch = false; Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
+                    )
+                    if (batchId == null) {
+                      isRendering = false
+                      renderingBatch = false
+                      Toast.makeText(context, "Batch export is not available.", Toast.LENGTH_LONG).show()
+                    }
+                  }
+                },
                 onOpenLibrary = { viewModel.setActiveTab(1) }
               )
               1 -> LibraryScreen(
@@ -156,6 +177,7 @@ class MainActivity : ComponentActivity() {
               FloatingActionButton(
                 onClick = {
                   isRendering = true
+                  renderingBatch = false
                   renderProgress = 0f
                   val jobId = backendService.enqueueDownload(
                     context = context,
@@ -188,11 +210,16 @@ class MainActivity : ComponentActivity() {
                 Column(Modifier.padding(14.dp)) {
                   Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Download, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                    Text("Rendering Short…", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
+                    Text(
+                      if (renderingBatch) "Exporting all Shorts…" else "Rendering Short…",
+                      style = MaterialTheme.typography.titleSmall,
+                      fontWeight = FontWeight.SemiBold,
+                      modifier = Modifier.padding(start = 8.dp)
+                    )
                     Text(" ${(renderProgress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 8.dp))
                   }
                   LinearProgressIndicator(progress = renderProgress, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
-                  Text("Keep ClipMint open until the download finishes.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+                  Text("Keep ClipMint open until export finishes.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
                 }
               }
             }
