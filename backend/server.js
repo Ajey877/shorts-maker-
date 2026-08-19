@@ -13,6 +13,13 @@ const YTDLP = process.env.YTDLP_PATH || '/usr/local/bin/yt-dlp';
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_RENDER_SECONDS = 30;
 const MAX_RENDER_CONCURRENCY = Math.max(1, Number(process.env.MAX_RENDER_CONCURRENCY || 1));
+const YTDLP_COMMON = [
+  '--no-playlist', '--no-warnings',
+  '--js-runtimes', 'deno',
+  '--remote-components', 'ejs:npm',
+  '--retries', '3', '--fragment-retries', '3', '--extractor-retries', '3',
+  '--socket-timeout', '30', '--concurrent-fragments', '1'
+];
 let activeRenders = 0;
 
 const HOOK_TERMS = /\b(how|why|secret|mistake|never|always|truth|problem|lesson|learned|changed|cost|saved|wrong|best|worst|important|actually|imagine|surprising|nobody|everyone|first|finally|before|after|because)\b/i;
@@ -92,11 +99,8 @@ function parseVtt(text) {
   const merged = [];
   for (const segment of segments) {
     const previous = merged[merged.length - 1];
-    if (previous && segment.start <= previous.end + 0.15 && segment.text === previous.text) {
-      previous.end = Math.max(previous.end, segment.end);
-    } else {
-      merged.push({ ...segment });
-    }
+    if (previous && segment.start <= previous.end + 0.15 && segment.text === previous.text) previous.end = Math.max(previous.end, segment.end);
+    else merged.push({ ...segment });
   }
   return merged;
 }
@@ -179,7 +183,7 @@ function makeClips(duration, count, requestedLength, transcript) {
       durationSeconds: end - range.start,
       rangeFormatted: `${formatTime(range.start)} – ${formatTime(end)}`,
       viralityScore: range.score,
-      whyViralReason: range.text ? 'Ranked from transcript signals including hook language, questions, speech density, and sentence completeness.' : 'Fallback segment selected because a usable transcript was unavailable.',
+      whyViralReason: range.text ? 'AI selection score based on transcript signals: hook language, questions, speech density, sentence completeness, and overlap avoidance.' : 'Deterministic segment selected because a usable transcript was unavailable.',
       keyTakeaway: firstWords || 'Standalone short-form moment.',
       suggestedHashtags: ['#Shorts', '#viral', '#youtubeshorts'],
       youtubeShortsDescription: range.text ? range.text.slice(0, 220) : 'Generated from a selected segment of the source video.',
@@ -190,9 +194,7 @@ function makeClips(duration, count, requestedLength, transcript) {
 
 function transcriptToSubtitles(segments, start, end) {
   return segments.filter((s) => s.end > start && s.start < end).slice(0, 80).map((s) => ({
-    relativeSec: Math.max(0, s.start - start),
-    text: s.text,
-    highlightWord: s.text.split(/\s+/)[0] || ''
+    relativeSec: Math.max(0, s.start - start), text: s.text, highlightWord: s.text.split(/\s+/)[0] || ''
   }));
 }
 
@@ -203,15 +205,14 @@ async function runCommand(file, args, options = {}) {
     const stderr = String(error?.stderr || '').trim();
     const stdout = String(error?.stdout || '').trim();
     const detail = stderr || stdout || error?.message || 'Command failed';
-    throw new Error(`${file.split('/').pop()} failed: ${detail}`.slice(0, 1200));
+    throw new Error(`${file.split('/').pop()} failed: ${detail}`.slice(0, 1600));
   }
 }
 
 async function getVideoInfo(url) {
   const { stdout } = await runCommand(YTDLP, [
-    '--dump-single-json', '--skip-download', '--no-playlist', '--no-warnings',
-    '--js-runtimes', 'node', url
-  ], { maxBuffer: 20 * 1024 * 1024, timeout: 90000 });
+    ...YTDLP_COMMON, '--dump-single-json', '--skip-download', url
+  ], { maxBuffer: 20 * 1024 * 1024, timeout: 120000 });
   return JSON.parse(stdout);
 }
 
@@ -219,10 +220,10 @@ async function getTranscript(url, workDir) {
   const pattern = join(workDir, 'subs.%(ext)s');
   try {
     await runCommand(YTDLP, [
-      '--skip-download', '--no-playlist', '--no-warnings', '--js-runtimes', 'node',
+      ...YTDLP_COMMON, '--skip-download',
       '--write-auto-subs', '--write-subs', '--sub-langs', 'en.*,en', '--sub-format', 'vtt',
       '--force-overwrites', '-o', pattern, url
-    ], { maxBuffer: 12 * 1024 * 1024, timeout: 120000 });
+    ], { maxBuffer: 12 * 1024 * 1024, timeout: 150000 });
     const subtitleFile = readdirSync(workDir).find((name) => name.endsWith('.vtt'));
     if (!subtitleFile) return [];
     const text = require('fs').readFileSync(join(workDir, subtitleFile), 'utf8');
@@ -244,30 +245,30 @@ async function renderClip(url, start, end, captions = true) {
   const inputPattern = join(workDir, 'source.%(ext)s');
   const output = join(workDir, 'clip.mp4');
   try {
-    let transcript = [];
-    if (captions) transcript = await getTranscript(url, workDir);
+    const transcript = captions ? await getTranscript(url, workDir) : [];
     await runCommand(YTDLP, [
-      '--no-playlist', '--no-warnings', '--js-runtimes', 'node',
-      '-f', 'best[ext=mp4][height<=720]/best[height<=720]/best',
+      ...YTDLP_COMMON,
+      '-f', 'bv*[ext=mp4][height<=720]+ba[ext=m4a]/b[ext=mp4][height<=720]/b[height<=720]/b',
       '--download-sections', `*${start}-${end}`,
       '--force-overwrites', '--no-part', '--merge-output-format', 'mp4',
       '--ffmpeg-location', FFMPEG, '-o', inputPattern, url
-    ], { maxBuffer: 20 * 1024 * 1024, timeout: 180000 });
+    ], { maxBuffer: 20 * 1024 * 1024, timeout: 240000 });
+
     const sourceName = readdirSync(workDir).find((name) => /^source\.(mp4|mkv|webm|mov)$/.test(name));
     if (!sourceName) throw new Error('yt-dlp completed but no source video was produced');
 
     const clipSubs = transcriptToSrt(transcript, start, end);
     const subtitlePath = join(workDir, 'captions.srt');
     const filters = ['scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'];
-    if (captions && clipSubs) {
+    if (captions && clipSubs.trim()) {
       await writeFile(subtitlePath, clipSubs, 'utf8');
-      if (clipSubs.trim()) filters.push(`subtitles=${subtitlePath}:force_style='FontName=Arial,FontSize=18,Bold=1,Outline=2,Alignment=2,MarginV=120'`);
+      filters.push(`subtitles=${subtitlePath}:force_style='FontName=Arial,FontSize=18,Bold=1,Outline=2,Alignment=2,MarginV=120'`);
     }
     await runCommand(FFMPEG, [
       '-y', '-i', join(workDir, sourceName), '-t', String(end - start),
       '-vf', filters.join(','), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
       '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', output
-    ], { maxBuffer: 10 * 1024 * 1024, timeout: 240000 });
+    ], { maxBuffer: 10 * 1024 * 1024, timeout: 300000 });
     return { workDir, output };
   } catch (error) {
     await rm(workDir, { recursive: true, force: true }).catch(() => {});
@@ -327,7 +328,9 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   try {
-    if (url.pathname === '/health') return json(res, 200, { ok: true, service: 'clipmint-render', ffmpeg: true, ytdlp: true, activeRenders });
+    if (url.pathname === '/health') {
+      return json(res, 200, { ok: true, service: 'clipmint-render', ffmpeg: true, ytdlp: true, jsRuntime: 'deno', activeRenders });
+    }
 
     if (url.pathname === '/api/analyze' && req.method === 'POST') {
       const body = await readJsonBody(req);
