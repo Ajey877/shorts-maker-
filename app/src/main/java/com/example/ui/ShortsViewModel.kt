@@ -77,6 +77,7 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
       _uiState.update { it.copy(isAnalyzing = true, analysisStatusText = "Connecting to ClipMint backend…") }
       try {
         val analysis = repository.analyzeVideo(input)
+          ?: throw IllegalStateException("ClipMint backend did not return an analysis. Check the backend URL and try again.")
         if (analysis.clips.isEmpty()) throw IllegalStateException("No usable Shorts were returned.")
         val videoInfo = analysis.video
         val clips = analysis.clips
