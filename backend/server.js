@@ -2,7 +2,7 @@ const http = require('http');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const { mkdtemp, rm, writeFile } = require('fs/promises');
-const { createReadStream, readdirSync, statSync } = require('fs');
+const { createReadStream, createWriteStream, readdirSync, statSync } = require('fs');
 const { join } = require('path');
 const { tmpdir } = require('os');
 
@@ -12,6 +12,7 @@ const FFMPEG = process.env.FFMPEG_PATH || '/usr/bin/ffmpeg';
 const YTDLP = process.env.YTDLP_PATH || '/usr/local/bin/yt-dlp';
 const MAX_BODY_BYTES = 16 * 1024;
 const MAX_RENDER_SECONDS = 30;
+const MAX_PREVIEW_SECONDS = 30;
 const MAX_RENDER_CONCURRENCY = Math.max(1, Number(process.env.MAX_RENDER_CONCURRENCY || 1));
 let activeRenders = 0;
 
@@ -20,8 +21,10 @@ const QUESTION_TERMS = /\?|\b(why|how|what|when|where|who)\b/i;
 
 function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS,HEAD');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range, Accept');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
 }
 
 function json(res, status, value) {
@@ -128,8 +131,8 @@ function buildCandidates(segments, duration, requestedLength, count) {
   if (!segments.length) return [];
   const length = Math.min(requestedLength, Math.max(10, duration - 1));
   const candidates = [];
-  for (let i = 0; i < segments.length; i += 1) {
-    const center = segments[i].start + Math.min(3, (segments[i].end - segments[i].start) / 2);
+  for (const segment of segments) {
+    const center = segment.start + Math.min(3, (segment.end - segment.start) / 2);
     let start = Math.max(0, center - length * 0.22);
     let end = start + length;
     const windowSegments = segments.filter((s) => s.end >= start && s.start <= end);
@@ -137,8 +140,7 @@ function buildCandidates(segments, duration, requestedLength, count) {
     start = Math.max(0, windowSegments[0].start - 0.8);
     end = Math.min(duration, start + length);
     const text = windowSegments.map((s) => s.text).join(' ');
-    const scored = scoreCandidate(text, end - start, start, end);
-    candidates.push({ ...scored, text, start, end });
+    candidates.push({ ...scoreCandidate(text, end - start, start, end), text, start, end });
   }
   candidates.sort((a, b) => b.score - a.score);
   const selected = [];
@@ -159,6 +161,14 @@ function fallbackClips(duration, count, requestedLength) {
     const start = Math.floor(usable * fraction);
     return { start, end: Math.min(duration, start + length), score: Math.max(60, 82 - index * 3), text: '' };
   });
+}
+
+function transcriptToSubtitles(segments, start, end) {
+  return segments.filter((s) => s.end > start && s.start < end).slice(0, 80).map((s) => ({
+    relativeSec: Math.max(0, s.start - start),
+    text: s.text,
+    highlightWord: s.text.split(/\s+/)[0] || ''
+  }));
 }
 
 function makeClips(duration, count, requestedLength, transcript) {
@@ -188,14 +198,6 @@ function makeClips(duration, count, requestedLength, transcript) {
   });
 }
 
-function transcriptToSubtitles(segments, start, end) {
-  return segments.filter((s) => s.end > start && s.start < end).slice(0, 80).map((s) => ({
-    relativeSec: Math.max(0, s.start - start),
-    text: s.text,
-    highlightWord: s.text.split(/\s+/)[0] || ''
-  }));
-}
-
 async function runCommand(file, args, options = {}) {
   try {
     return await execFileAsync(file, args, options);
@@ -209,8 +211,7 @@ async function runCommand(file, args, options = {}) {
 
 async function getVideoInfo(url) {
   const { stdout } = await runCommand(YTDLP, [
-    '--dump-single-json', '--skip-download', '--no-playlist', '--no-warnings',
-    '--js-runtimes', 'node', url
+    '--dump-single-json', '--skip-download', '--no-playlist', '--no-warnings', '--js-runtimes', 'node', url
   ], { maxBuffer: 20 * 1024 * 1024, timeout: 90000 });
   return JSON.parse(stdout);
 }
@@ -225,49 +226,66 @@ async function getTranscript(url, workDir) {
     ], { maxBuffer: 12 * 1024 * 1024, timeout: 120000 });
     const subtitleFile = readdirSync(workDir).find((name) => name.endsWith('.vtt'));
     if (!subtitleFile) return [];
-    const text = require('fs').readFileSync(join(workDir, subtitleFile), 'utf8');
-    return cleanTranscript(parseVtt(text));
+    const fs = require('fs');
+    return cleanTranscript(parseVtt(fs.readFileSync(join(workDir, subtitleFile), 'utf8')));
   } catch (error) {
     console.warn('Transcript unavailable:', error.message);
     return [];
   }
 }
 
-async function renderClip(url, start, end, captions = true) {
+async function createRenderedFile(url, start, end, options = {}) {
+  const {
+    preview = false,
+    captions = true,
+    width = 1080,
+    height = 1920,
+    sourceHeight = 720,
+    preset = 'veryfast',
+    crf = 23,
+    audioBitrate = '128k'
+  } = options;
+
   if (activeRenders >= MAX_RENDER_CONCURRENCY) {
     const error = new Error('Renderer is busy. Please try again in a moment.');
     error.statusCode = 429;
     throw error;
   }
   activeRenders += 1;
-  const workDir = await mkdtemp(join(tmpdir(), 'clipmint-'));
+  const workDir = await mkdtemp(join(tmpdir(), preview ? 'clipmint-preview-' : 'clipmint-render-'));
   const inputPattern = join(workDir, 'source.%(ext)s');
-  const output = join(workDir, 'clip.mp4');
+  const output = join(workDir, preview ? 'preview.mp4' : 'clip.mp4');
   try {
     let transcript = [];
-    if (captions) transcript = await getTranscript(url, workDir);
+    if (captions && !preview) transcript = await getTranscript(url, workDir);
+
     await runCommand(YTDLP, [
       '--no-playlist', '--no-warnings', '--js-runtimes', 'node',
-      '-f', 'best[ext=mp4][height<=720]/best[height<=720]/best',
+      '-f', `best[ext=mp4][height<=${sourceHeight}]/best[height<=${sourceHeight}]/best`,
       '--download-sections', `*${start}-${end}`,
       '--force-overwrites', '--no-part', '--merge-output-format', 'mp4',
       '--ffmpeg-location', FFMPEG, '-o', inputPattern, url
     ], { maxBuffer: 20 * 1024 * 1024, timeout: 180000 });
+
     const sourceName = readdirSync(workDir).find((name) => /^source\.(mp4|mkv|webm|mov)$/.test(name));
     if (!sourceName) throw new Error('yt-dlp completed but no source video was produced');
 
-    const clipSubs = transcriptToSrt(transcript, start, end);
-    const subtitlePath = join(workDir, 'captions.srt');
-    const filters = ['scale=1080:1920:force_original_aspect_ratio=increase', 'crop=1080:1920'];
-    if (captions && clipSubs) {
-      await writeFile(subtitlePath, clipSubs, 'utf8');
-      if (clipSubs.trim()) filters.push(`subtitles=${subtitlePath}:force_style='FontName=Arial,FontSize=18,Bold=1,Outline=2,Alignment=2,MarginV=120'`);
+    const filters = [`scale=${width}:${height}:force_original_aspect_ratio=increase`, `crop=${width}:${height}`];
+    if (captions && !preview) {
+      const clipSubs = transcriptToSrt(transcript, start, end);
+      if (clipSubs.trim()) {
+        const subtitlePath = join(workDir, 'captions.srt');
+        await writeFile(subtitlePath, clipSubs, 'utf8');
+        filters.push(`subtitles=${subtitlePath}:force_style='FontName=Arial,FontSize=18,Bold=1,Outline=2,Alignment=2,MarginV=120'`);
+      }
     }
+
     await runCommand(FFMPEG, [
       '-y', '-i', join(workDir, sourceName), '-t', String(end - start),
-      '-vf', filters.join(','), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
-      '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', output
-    ], { maxBuffer: 10 * 1024 * 1024, timeout: 240000 });
+      '-vf', filters.join(','), '-c:v', 'libx264', '-preset', preset, '-crf', String(crf),
+      '-c:a', 'aac', '-b:a', audioBitrate, '-movflags', '+faststart', output
+    ], { maxBuffer: 10 * 1024 * 1024, timeout: preview ? 180000 : 240000 });
+
     return { workDir, output };
   } catch (error) {
     await rm(workDir, { recursive: true, force: true }).catch(() => {});
@@ -296,15 +314,46 @@ function transcriptToSrt(segments, start, end) {
   }).filter(Boolean).join('\n');
 }
 
-function streamFile(res, filePath, cleanupDir) {
+function streamVideoFile(req, res, filePath, cleanupDir, inline = false) {
   const size = statSync(filePath).size;
-  cors(res);
-  res.writeHead(200, {
-    'Content-Type': 'video/mp4', 'Content-Length': size,
-    'Content-Disposition': 'attachment; filename="clipmint-short.mp4"', 'Cache-Control': 'no-store'
-  });
-  const stream = createReadStream(filePath);
+  const rangeHeader = req.headers.range;
   const cleanup = () => rm(cleanupDir, { recursive: true, force: true }).catch(() => {});
+
+  cors(res);
+  res.setHeader('Accept-Ranges', 'bytes');
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('Content-Type', 'video/mp4');
+  res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="clipmint-short.mp4"`);
+
+  if (!rangeHeader) {
+    res.setHeader('Content-Length', size);
+    if (req.method === 'HEAD') { res.writeHead(200); return res.end(); }
+    const stream = createReadStream(filePath);
+    stream.on('error', cleanup);
+    res.on('close', cleanup);
+    return stream.pipe(res);
+  }
+
+  const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
+  if (!match) {
+    res.writeHead(416, { 'Content-Range': `bytes */${size}` });
+    return res.end();
+  }
+  const start = match[1] ? Number(match[1]) : Math.max(0, size - Number(match[2]));
+  const end = match[2] ? Number(match[2]) : size - 1;
+  if (start > end || start >= size || !Number.isFinite(start) || !Number.isFinite(end)) {
+    res.writeHead(416, { 'Content-Range': `bytes */${size}` });
+    return res.end();
+  }
+
+  const safeEnd = Math.min(end, size - 1);
+  const chunkSize = safeEnd - start + 1;
+  res.writeHead(206, {
+    'Content-Length': chunkSize,
+    'Content-Range': `bytes ${start}-${safeEnd}/${size}`
+  });
+  if (req.method === 'HEAD') return res.end();
+  const stream = createReadStream(filePath, { start, end: safeEnd });
   stream.on('error', cleanup);
   res.on('close', cleanup);
   stream.pipe(res);
@@ -315,7 +364,9 @@ async function readJsonBody(req) {
   for await (const chunk of req) {
     raw += chunk;
     if (Buffer.byteLength(raw) > MAX_BODY_BYTES) {
-      const error = new Error('Request body is too large.'); error.statusCode = 413; throw error;
+      const error = new Error('Request body is too large.');
+      error.statusCode = 413;
+      throw error;
     }
   }
   try { return JSON.parse(raw || '{}'); }
@@ -326,28 +377,68 @@ const server = http.createServer(async (req, res) => {
   cors(res);
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+
   try {
-    if (url.pathname === '/health') return json(res, 200, { ok: true, service: 'clipmint-render', ffmpeg: true, ytdlp: true, activeRenders });
+    if (url.pathname === '/health') {
+      return json(res, 200, {
+        ok: true,
+        service: 'clipmint-render',
+        ffmpeg: true,
+        ytdlp: true,
+        activeRenders,
+        maxRenderConcurrency: MAX_RENDER_CONCURRENCY
+      });
+    }
 
     if (url.pathname === '/api/analyze' && req.method === 'POST') {
       const body = await readJsonBody(req);
       const sourceUrl = String(body.url || '').trim();
       const id = getVideoId(sourceUrl);
       if (!id) return json(res, 400, { error: 'Invalid YouTube URL.' });
+
       const info = await getVideoInfo(sourceUrl);
       const duration = Math.floor(validateFiniteNumber(info.duration, 0));
       if (!duration || duration < 10) return json(res, 422, { error: 'Video is too short or its duration could not be determined.' });
+
       const count = Number(body.clipCount) === 3 ? 3 : 4;
       const length = Number(body.clipLength) === 15 ? 15 : 30;
       const workDir = await mkdtemp(join(tmpdir(), 'clipmint-analysis-'));
       try {
         const transcript = await getTranscript(sourceUrl, workDir);
         return json(res, 200, {
-          video: { id, url: sourceUrl, title: info.title || 'YouTube video', channelName: info.uploader || info.channel || 'YouTube creator', durationSeconds: duration, thumbnailUrl: info.thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg` },
+          video: {
+            id,
+            url: sourceUrl,
+            title: info.title || 'YouTube video',
+            channelName: info.uploader || info.channel || 'YouTube creator',
+            durationSeconds: duration,
+            thumbnailUrl: info.thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`
+          },
           transcriptAvailable: transcript.length > 0,
           clips: makeClips(duration, count, length, transcript)
         });
-      } finally { await rm(workDir, { recursive: true, force: true }).catch(() => {}); }
+      } finally {
+        await rm(workDir, { recursive: true, force: true }).catch(() => {});
+      }
+    }
+
+    if (url.pathname === '/api/preview' && (req.method === 'GET' || req.method === 'HEAD')) {
+      const sourceUrl = url.searchParams.get('url') || '';
+      const start = Math.max(0, Math.floor(validateFiniteNumber(url.searchParams.get('start'), 0)));
+      const end = Math.floor(validateFiniteNumber(url.searchParams.get('end'), start + 15));
+      if (!getVideoId(sourceUrl)) return json(res, 400, { error: 'Invalid YouTube URL.' });
+      if (end <= start || end - start > MAX_PREVIEW_SECONDS) return json(res, 400, { error: `Preview length must be between 1 and ${MAX_PREVIEW_SECONDS} seconds.` });
+      const rendered = await createRenderedFile(sourceUrl, start, end, {
+        preview: true,
+        captions: false,
+        width: 360,
+        height: 640,
+        sourceHeight: 360,
+        preset: 'ultrafast',
+        crf: 30,
+        audioBitrate: '96k'
+      });
+      return streamVideoFile(req, res, rendered.output, rendered.workDir, true);
     }
 
     if (url.pathname === '/api/render' && req.method === 'GET') {
@@ -357,9 +448,10 @@ const server = http.createServer(async (req, res) => {
       const captions = url.searchParams.get('captions') !== '0';
       if (!getVideoId(sourceUrl)) return json(res, 400, { error: 'Invalid YouTube URL.' });
       if (end <= start || end - start > MAX_RENDER_SECONDS) return json(res, 400, { error: `Clip length must be between 1 and ${MAX_RENDER_SECONDS} seconds.` });
-      const rendered = await renderClip(sourceUrl, start, end, captions);
-      return streamFile(res, rendered.output, rendered.workDir);
+      const rendered = await createRenderedFile(sourceUrl, start, end, { captions });
+      return streamVideoFile(req, res, rendered.output, rendered.workDir, false);
     }
+
     return json(res, 404, { error: 'Not found' });
   } catch (error) {
     console.error('ClipMint request failed:', error);
