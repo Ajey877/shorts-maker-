@@ -2,7 +2,7 @@ const http = require('http');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const { mkdtemp, rm, writeFile } = require('fs/promises');
-const { createReadStream, createWriteStream, readdirSync, statSync } = require('fs');
+const { createReadStream, readdirSync, statSync } = require('fs');
 const { join } = require('path');
 const { tmpdir } = require('os');
 
@@ -14,7 +14,9 @@ const MAX_BODY_BYTES = 16 * 1024;
 const MAX_RENDER_SECONDS = 30;
 const MAX_PREVIEW_SECONDS = 30;
 const MAX_RENDER_CONCURRENCY = Math.max(1, Number(process.env.MAX_RENDER_CONCURRENCY || 1));
+const RATE_LIMIT_PER_MINUTE = Math.max(1, Number(process.env.RATE_LIMIT_PER_MINUTE || 12));
 let activeRenders = 0;
+const rateBuckets = new Map();
 
 const HOOK_TERMS = /\b(how|why|secret|mistake|never|always|truth|problem|lesson|learned|changed|cost|saved|wrong|best|worst|important|actually|imagine|surprising|nobody|everyone|first|finally|before|after|because)\b/i;
 const QUESTION_TERMS = /\?|\b(why|how|what|when|where|who)\b/i;
@@ -23,7 +25,7 @@ function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS,HEAD');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range, Accept');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type, Retry-After');
   res.setHeader('X-Content-Type-Options', 'nosniff');
 }
 
@@ -33,6 +35,32 @@ function json(res, status, value) {
   res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(body);
 }
+
+function clientKey(req) {
+  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+  return forwarded || req.socket.remoteAddress || 'unknown';
+}
+
+function rateLimit(req) {
+  const now = Date.now();
+  const key = clientKey(req);
+  const bucket = rateBuckets.get(key) || { startedAt: now, count: 0 };
+  if (now - bucket.startedAt >= 60_000) {
+    bucket.startedAt = now;
+    bucket.count = 0;
+  }
+  bucket.count += 1;
+  rateBuckets.set(key, bucket);
+  if (bucket.count > RATE_LIMIT_PER_MINUTE) return { allowed: false, retryAfter: Math.max(1, Math.ceil((60_000 - (now - bucket.startedAt)) / 1000)) };
+  return { allowed: true, remaining: Math.max(0, RATE_LIMIT_PER_MINUTE - bucket.count) };
+}
+
+setInterval(() => {
+  const cutoff = Date.now() - 120_000;
+  for (const [key, bucket] of rateBuckets.entries()) {
+    if (bucket.startedAt < cutoff) rateBuckets.delete(key);
+  }
+}, 60_000).unref();
 
 function getVideoId(input) {
   try {
@@ -107,8 +135,9 @@ function parseVtt(text) {
 function cleanTranscript(segments) {
   const seen = new Set();
   return segments.filter((s) => {
-    const key = `${Math.round(s.start * 2)}:${s.text.toLowerCase()}`;
-    if (seen.has(key)) return false;
+    const normalized = s.text.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const key = `${Math.round(s.start * 2)}:${normalized}`;
+    if (!normalized || seen.has(key)) return false;
     seen.add(key);
     return true;
   });
@@ -163,6 +192,14 @@ function fallbackClips(duration, count, requestedLength) {
   });
 }
 
+function headlineFromText(text, index) {
+  const sentences = text.split(/(?<=[.!?])\s+/).map((s) => s.trim()).filter(Boolean);
+  const best = sentences.find((s) => s.length >= 18 && (HOOK_TERMS.test(s) || QUESTION_TERMS.test(s))) || sentences[0];
+  if (!best) return ['A strong opening moment', 'The key turning point', 'The insight to remember', 'The payoff'][index] || 'Watch this moment';
+  const compact = best.replace(/\s+/g, ' ').replace(/[.?!]+$/, '');
+  return compact.length > 58 ? `${compact.slice(0, 55).trim()}…` : compact;
+}
+
 function transcriptToSubtitles(segments, start, end) {
   return segments.filter((s) => s.end > start && s.start < end).slice(0, 80).map((s) => ({
     relativeSec: Math.max(0, s.start - start),
@@ -183,13 +220,13 @@ function makeClips(duration, count, requestedLength, transcript) {
       id: `clip-${index + 1}-${Math.floor(range.start)}-${Math.floor(end)}`,
       clipIndex: index + 1,
       title,
-      hookHeadline: HOOK_TERMS.test(range.text) ? 'THIS CHANGES EVERYTHING' : 'WATCH THIS',
+      hookHeadline: headlineFromText(range.text, index),
       startSeconds: Math.max(0, Math.floor(range.start)),
       endSeconds: Math.max(Math.floor(range.start) + 1, Math.floor(end)),
       durationSeconds: end - range.start,
       rangeFormatted: `${formatTime(range.start)} – ${formatTime(end)}`,
       viralityScore: range.score,
-      whyViralReason: range.text ? 'Ranked from transcript signals including hook language, questions, speech density, and sentence completeness.' : 'Fallback segment selected because a usable transcript was unavailable.',
+      whyViralReason: range.text ? 'Selection score based on transcript hook language, questions, speech density, sentence completeness, and low filler.' : 'Fallback segment selected because a usable transcript was unavailable.',
       keyTakeaway: firstWords || 'Standalone short-form moment.',
       suggestedHashtags: ['#Shorts', '#viral', '#youtubeshorts'],
       youtubeShortsDescription: range.text ? range.text.slice(0, 220) : 'Generated from a selected segment of the source video.',
@@ -258,7 +295,6 @@ async function createRenderedFile(url, start, end, options = {}) {
   try {
     let transcript = [];
     if (captions && !preview) transcript = await getTranscript(url, workDir);
-
     await runCommand(YTDLP, [
       '--no-playlist', '--no-warnings', '--js-runtimes', 'node',
       '-f', `best[ext=mp4][height<=${sourceHeight}]/best[height<=${sourceHeight}]/best`,
@@ -266,7 +302,6 @@ async function createRenderedFile(url, start, end, options = {}) {
       '--force-overwrites', '--no-part', '--merge-output-format', 'mp4',
       '--ffmpeg-location', FFMPEG, '-o', inputPattern, url
     ], { maxBuffer: 20 * 1024 * 1024, timeout: 180000 });
-
     const sourceName = readdirSync(workDir).find((name) => /^source\.(mp4|mkv|webm|mov)$/.test(name));
     if (!sourceName) throw new Error('yt-dlp completed but no source video was produced');
 
@@ -279,13 +314,11 @@ async function createRenderedFile(url, start, end, options = {}) {
         filters.push(`subtitles=${subtitlePath}:force_style='FontName=Arial,FontSize=18,Bold=1,Outline=2,Alignment=2,MarginV=120'`);
       }
     }
-
     await runCommand(FFMPEG, [
       '-y', '-i', join(workDir, sourceName), '-t', String(end - start),
       '-vf', filters.join(','), '-c:v', 'libx264', '-preset', preset, '-crf', String(crf),
       '-c:a', 'aac', '-b:a', audioBitrate, '-movflags', '+faststart', output
     ], { maxBuffer: 10 * 1024 * 1024, timeout: preview ? 180000 : 240000 });
-
     return { workDir, output };
   } catch (error) {
     await rm(workDir, { recursive: true, force: true }).catch(() => {});
@@ -318,13 +351,11 @@ function streamVideoFile(req, res, filePath, cleanupDir, inline = false) {
   const size = statSync(filePath).size;
   const rangeHeader = req.headers.range;
   const cleanup = () => rm(cleanupDir, { recursive: true, force: true }).catch(() => {});
-
   cors(res);
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('Content-Type', 'video/mp4');
   res.setHeader('Content-Disposition', `${inline ? 'inline' : 'attachment'}; filename="clipmint-short.mp4"`);
-
   if (!rangeHeader) {
     res.setHeader('Content-Length', size);
     if (req.method === 'HEAD') { res.writeHead(200); return res.end(); }
@@ -333,25 +364,14 @@ function streamVideoFile(req, res, filePath, cleanupDir, inline = false) {
     res.on('close', cleanup);
     return stream.pipe(res);
   }
-
   const match = /^bytes=(\d*)-(\d*)$/.exec(rangeHeader);
-  if (!match) {
-    res.writeHead(416, { 'Content-Range': `bytes */${size}` });
-    return res.end();
-  }
+  if (!match) { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); return res.end(); }
   const start = match[1] ? Number(match[1]) : Math.max(0, size - Number(match[2]));
   const end = match[2] ? Number(match[2]) : size - 1;
-  if (start > end || start >= size || !Number.isFinite(start) || !Number.isFinite(end)) {
-    res.writeHead(416, { 'Content-Range': `bytes */${size}` });
-    return res.end();
-  }
-
+  if (start > end || start >= size || !Number.isFinite(start) || !Number.isFinite(end)) { res.writeHead(416, { 'Content-Range': `bytes */${size}` }); return res.end(); }
   const safeEnd = Math.min(end, size - 1);
   const chunkSize = safeEnd - start + 1;
-  res.writeHead(206, {
-    'Content-Length': chunkSize,
-    'Content-Range': `bytes ${start}-${safeEnd}/${size}`
-  });
+  res.writeHead(206, { 'Content-Length': chunkSize, 'Content-Range': `bytes ${start}-${safeEnd}/${size}` });
   if (req.method === 'HEAD') return res.end();
   const stream = createReadStream(filePath, { start, end: safeEnd });
   stream.on('error', cleanup);
@@ -364,9 +384,7 @@ async function readJsonBody(req) {
   for await (const chunk of req) {
     raw += chunk;
     if (Buffer.byteLength(raw) > MAX_BODY_BYTES) {
-      const error = new Error('Request body is too large.');
-      error.statusCode = 413;
-      throw error;
+      const error = new Error('Request body is too large.'); error.statusCode = 413; throw error;
     }
   }
   try { return JSON.parse(raw || '{}'); }
@@ -379,15 +397,18 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
   try {
+    if (['POST'].includes(req.method) && ['/api/analyze', '/api/render', '/api/preview'].includes(url.pathname)) {
+      const limited = rateLimit(req);
+      res.setHeader('X-RateLimit-Limit', RATE_LIMIT_PER_MINUTE);
+      res.setHeader('X-RateLimit-Remaining', limited.remaining ?? 0);
+      if (!limited.allowed) {
+        res.setHeader('Retry-After', limited.retryAfter);
+        return json(res, 429, { error: 'Too many requests. Please try again shortly.', retryAfterSeconds: limited.retryAfter });
+      }
+    }
+
     if (url.pathname === '/health') {
-      return json(res, 200, {
-        ok: true,
-        service: 'clipmint-render',
-        ffmpeg: true,
-        ytdlp: true,
-        activeRenders,
-        maxRenderConcurrency: MAX_RENDER_CONCURRENCY
-      });
+      return json(res, 200, { ok: true, service: 'clipmint-render', ffmpeg: true, ytdlp: true, activeRenders, maxRenderConcurrency: MAX_RENDER_CONCURRENCY, rateLimitPerMinute: RATE_LIMIT_PER_MINUTE });
     }
 
     if (url.pathname === '/api/analyze' && req.method === 'POST') {
@@ -395,31 +416,20 @@ const server = http.createServer(async (req, res) => {
       const sourceUrl = String(body.url || '').trim();
       const id = getVideoId(sourceUrl);
       if (!id) return json(res, 400, { error: 'Invalid YouTube URL.' });
-
       const info = await getVideoInfo(sourceUrl);
       const duration = Math.floor(validateFiniteNumber(info.duration, 0));
       if (!duration || duration < 10) return json(res, 422, { error: 'Video is too short or its duration could not be determined.' });
-
       const count = Number(body.clipCount) === 3 ? 3 : 4;
       const length = Number(body.clipLength) === 15 ? 15 : 30;
       const workDir = await mkdtemp(join(tmpdir(), 'clipmint-analysis-'));
       try {
         const transcript = await getTranscript(sourceUrl, workDir);
         return json(res, 200, {
-          video: {
-            id,
-            url: sourceUrl,
-            title: info.title || 'YouTube video',
-            channelName: info.uploader || info.channel || 'YouTube creator',
-            durationSeconds: duration,
-            thumbnailUrl: info.thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg`
-          },
+          video: { id, url: sourceUrl, title: info.title || 'YouTube video', channelName: info.uploader || info.channel || 'YouTube creator', durationSeconds: duration, thumbnailUrl: info.thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg` },
           transcriptAvailable: transcript.length > 0,
           clips: makeClips(duration, count, length, transcript)
         });
-      } finally {
-        await rm(workDir, { recursive: true, force: true }).catch(() => {});
-      }
+      } finally { await rm(workDir, { recursive: true, force: true }).catch(() => {}); }
     }
 
     if (url.pathname === '/api/preview' && (req.method === 'GET' || req.method === 'HEAD')) {
@@ -428,16 +438,7 @@ const server = http.createServer(async (req, res) => {
       const end = Math.floor(validateFiniteNumber(url.searchParams.get('end'), start + 15));
       if (!getVideoId(sourceUrl)) return json(res, 400, { error: 'Invalid YouTube URL.' });
       if (end <= start || end - start > MAX_PREVIEW_SECONDS) return json(res, 400, { error: `Preview length must be between 1 and ${MAX_PREVIEW_SECONDS} seconds.` });
-      const rendered = await createRenderedFile(sourceUrl, start, end, {
-        preview: true,
-        captions: false,
-        width: 360,
-        height: 640,
-        sourceHeight: 360,
-        preset: 'ultrafast',
-        crf: 30,
-        audioBitrate: '96k'
-      });
+      const rendered = await createRenderedFile(sourceUrl, start, end, { preview: true, captions: false, width: 360, height: 640, sourceHeight: 360, preset: 'ultrafast', crf: 30, audioBitrate: '96k' });
       return streamVideoFile(req, res, rendered.output, rendered.workDir, true);
     }
 
