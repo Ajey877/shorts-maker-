@@ -6,6 +6,20 @@ on:
     branches: ["clipmint-free-apk"]
 
 jobs:
+  backend-check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check backend syntax
+        run: node --check backend/server.js
+
   build:
     runs-on: ubuntu-latest
     permissions:
