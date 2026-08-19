@@ -35,10 +35,12 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -46,6 +48,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.work.BackoffPolicy
+import androidx.work.Constraints
+import androidx.work.ExistingWorkPolicy
+import androidx.work.NetworkType
+import androidx.work.OneTimeWorkRequestBuilder
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
+import androidx.work.workDataOf
 import com.example.data.remote.ClipMintBackendService
 import com.example.ui.ShortsViewModel
 import com.example.ui.components.ExportUploadDialog
@@ -53,6 +63,10 @@ import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.LibraryScreen
 import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.MyApplicationTheme
+import com.example.work.ClipExportWorker
+import org.json.JSONArray
+import org.json.JSONObject
+import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
   private val viewModel: ShortsViewModel by viewModels()
@@ -66,13 +80,94 @@ class MainActivity : ComponentActivity() {
         val uiState by viewModel.uiState.collectAsStateWithLifecycle()
         val savedClips by viewModel.savedClips.collectAsStateWithLifecycle()
         val context = LocalContext.current
-        var isRendering by remember { mutableStateOf(false) }
-        var renderingBatch by remember { mutableStateOf(false) }
+        val workManager = remember { WorkManager.getInstance(context) }
+
+        var exportWorkIdText by rememberSaveable { mutableStateOf<String?>(null) }
+        var isRendering by rememberSaveable { mutableStateOf(false) }
+        var renderingBatch by rememberSaveable { mutableStateOf(false) }
         var renderProgress by remember { mutableFloatStateOf(0f) }
+
+        LaunchedEffect(exportWorkIdText) {
+          val idText = exportWorkIdText ?: return@LaunchedEffect
+          val id = runCatching { java.util.UUID.fromString(idText) }.getOrNull() ?: return@LaunchedEffect
+          workManager.getWorkInfoByIdFlow(id).collect { info ->
+            if (info == null) return@collect
+            when (info.state) {
+              WorkInfo.State.ENQUEUED -> {
+                isRendering = true
+                renderProgress = info.progress.getInt(ClipExportWorker.KEY_PROGRESS, 0) / 100f
+              }
+              WorkInfo.State.RUNNING -> {
+                isRendering = true
+                renderProgress = info.progress.getInt(ClipExportWorker.KEY_PROGRESS, 0) / 100f
+              }
+              WorkInfo.State.SUCCEEDED -> {
+                renderProgress = 1f
+                isRendering = false
+                renderingBatch = false
+                Toast.makeText(context, "Export finished. Check Downloads/ClipMint.", Toast.LENGTH_LONG).show()
+                exportWorkIdText = null
+              }
+              WorkInfo.State.FAILED -> {
+                isRendering = false
+                renderingBatch = false
+                Toast.makeText(context, "Export failed. You can retry from the editor.", Toast.LENGTH_LONG).show()
+                exportWorkIdText = null
+              }
+              WorkInfo.State.CANCELLED -> {
+                isRendering = false
+                renderingBatch = false
+                Toast.makeText(context, "Export cancelled.", Toast.LENGTH_SHORT).show()
+                exportWorkIdText = null
+              }
+              else -> Unit
+            }
+          }
+        }
 
         val selectedClip = uiState.selectedClip
         val currentVideo = uiState.currentVideo
         val previewUrl = if (selectedClip != null && currentVideo != null) backendService.previewUrl(currentVideo.url, selectedClip) else null
+
+        fun buildClipsJson(clips: List<com.example.model.ShortClip>): String = JSONArray().apply {
+          clips.forEach { clip ->
+            put(JSONObject().apply {
+              put("clipIndex", clip.clipIndex)
+              put("start", clip.startSeconds)
+              put("end", clip.endSeconds)
+              put("hook", clip.hookHeadline)
+            })
+          }
+        }.toString()
+
+        fun scheduleExport(clips: List<com.example.model.ShortClip>, useCustomHook: Boolean) {
+          if (currentVideo == null || clips.isEmpty() || isRendering) return
+          val exportClips = clips.take(uiState.clipCount).map { clip ->
+            if (!useCustomHook) clip else clip.copy(hookHeadline = uiState.customHookHeadline.ifBlank { clip.hookHeadline })
+          }
+          val request = OneTimeWorkRequestBuilder<ClipExportWorker>()
+            .setInputData(
+              workDataOf(
+                ClipExportWorker.KEY_VIDEO_URL to currentVideo.url,
+                ClipExportWorker.KEY_CLIPS to buildClipsJson(exportClips),
+                ClipExportWorker.KEY_CAPTION_STYLE to uiState.captionStyle.name
+              )
+            )
+            .setConstraints(Constraints.Builder().setRequiredNetworkType(NetworkType.CONNECTED).build())
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 15, TimeUnit.SECONDS)
+            .addTag("clipmint-export")
+            .build()
+
+          isRendering = true
+          renderingBatch = exportClips.size > 1
+          renderProgress = 0f
+          exportWorkIdText = request.id.toString()
+          workManager.enqueueUniqueWork(
+            "clipmint-export-${System.currentTimeMillis()}",
+            ExistingWorkPolicy.REPLACE,
+            request
+          )
+        }
 
         Scaffold(
           modifier = Modifier.fillMaxSize(),
@@ -138,28 +233,7 @@ class MainActivity : ComponentActivity() {
                 onCopyMetadata = { clip -> viewModel.copyShortsMetadata(context, clip) },
                 onUploadShorts = { clip -> viewModel.selectClip(clip); viewModel.setUploadDialogVisible(true) },
                 onShareClip = { clip -> viewModel.shareShortsClip(context, clip) },
-                onExportAll = {
-                  if (currentVideo != null && uiState.clips.isNotEmpty() && !isRendering) {
-                    isRendering = true
-                    renderingBatch = true
-                    renderProgress = 0f
-                    val batchId = backendService.enqueueBatchDownload(
-                      context = context,
-                      videoUrl = currentVideo.url,
-                      clips = uiState.clips.take(uiState.clipCount),
-                      hookText = uiState.customHookHeadline,
-                      captionStyle = uiState.captionStyle.name,
-                      onProgress = { renderProgress = it },
-                      onComplete = { isRendering = false; renderingBatch = false; renderProgress = 1f },
-                      onError = { message -> isRendering = false; renderingBatch = false; Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
-                    )
-                    if (batchId == null) {
-                      isRendering = false
-                      renderingBatch = false
-                      Toast.makeText(context, "Batch export is not available.", Toast.LENGTH_LONG).show()
-                    }
-                  }
-                },
+                onExportAll = { scheduleExport(uiState.clips, useCustomHook = false) },
                 onOpenLibrary = { viewModel.setActiveTab(1) }
               )
               1 -> LibraryScreen(
@@ -176,25 +250,7 @@ class MainActivity : ComponentActivity() {
 
             if (uiState.activeTab == 0 && selectedClip != null && currentVideo != null && !isRendering) {
               FloatingActionButton(
-                onClick = {
-                  isRendering = true
-                  renderingBatch = false
-                  renderProgress = 0f
-                  val jobId = backendService.enqueueDownload(
-                    context = context,
-                    videoUrl = currentVideo.url,
-                    clip = selectedClip,
-                    hookText = uiState.customHookHeadline,
-                    captionStyle = uiState.captionStyle.name,
-                    onProgress = { renderProgress = it },
-                    onComplete = { isRendering = false; renderProgress = 1f },
-                    onError = { isRendering = false }
-                  )
-                  if (jobId == null) {
-                    isRendering = false
-                    Toast.makeText(context, "Render service is not configured.", Toast.LENGTH_LONG).show()
-                  }
-                },
+                onClick = { scheduleExport(listOf(selectedClip), useCustomHook = true) },
                 containerColor = MaterialTheme.colorScheme.primary,
                 contentColor = MaterialTheme.colorScheme.onPrimary,
                 modifier = Modifier.align(Alignment.BottomEnd).padding(16.dp)
@@ -213,11 +269,16 @@ class MainActivity : ComponentActivity() {
                 Column(Modifier.padding(14.dp)) {
                   Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Download, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                    Text(if (renderingBatch) "Exporting all Shorts…" else "Rendering Short…", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
+                    Text(
+                      if (renderingBatch) "Exporting Shorts in background…" else "Exporting Short in background…",
+                      style = MaterialTheme.typography.titleSmall,
+                      fontWeight = FontWeight.SemiBold,
+                      modifier = Modifier.padding(start = 8.dp)
+                    )
                     Text(" ${(renderProgress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 8.dp))
                   }
                   LinearProgressIndicator(progress = renderProgress, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
-                  Text("Keep ClipMint open until export finishes.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
+                  Text("You can leave this screen while ClipMint finishes the export.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
                 }
               }
             }
