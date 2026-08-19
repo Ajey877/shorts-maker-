@@ -86,18 +86,21 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
           bannerNotification = null,
           clips = emptyList(),
           selectedClip = null,
-          currentVideo = null
+          currentVideo = null,
+          retentionPoints = emptyList()
         )
       }
 
       try {
         delay(200)
-        val videoInfo = repository.resolveVideo(input)
-        _uiState.update { it.copy(currentVideo = videoInfo, analysisStatusText = "Reading video metadata…") }
+        val result = repository.analyzeVideo(input)
+          ?: throw IllegalStateException("ClipMint backend is unavailable. Check the backend URL and try again.")
+
+        _uiState.update { it.copy(currentVideo = result.video, analysisStatusText = "Reading video metadata…") }
         delay(300)
         _uiState.update { it.copy(analysisStatusText = "Finding strong candidate moments…") }
 
-        val generatedClips = repository.generateShortsForVideo(videoInfo)
+        val generatedClips = result.clips
         if (generatedClips.isEmpty()) throw IllegalStateException("No usable Shorts could be generated from this video.")
 
         val retention = repository.getRetentionCurve(generatedClips)
@@ -105,7 +108,7 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update {
           it.copy(
             isAnalyzing = false,
-            currentVideo = videoInfo,
+            currentVideo = result.video,
             clips = generatedClips,
             selectedClip = firstClip,
             retentionPoints = retention,
