@@ -1,43 +1,51 @@
 # 🎬 ClipMint — AI YouTube Shorts Maker
 
-ClipMint turns a YouTube video into ready-to-share vertical Shorts from Android. The app uses a lightweight backend for the expensive video work so the phone does not have to download and process the full source video itself.
+ClipMint turns a supported YouTube video into ready-to-share vertical Shorts from Android. The app uses a backend for video extraction, transcript analysis, and FFmpeg rendering so the phone does not have to download and process the full source video itself.
 
 ## What ClipMint does
 
 1. Paste a supported YouTube URL.
-2. Fetch the real video metadata and duration.
-3. Try to obtain English subtitles/auto-captions with yt-dlp.
+2. Fetch real video metadata with yt-dlp.
+3. Obtain English subtitles/auto-captions when YouTube provides them.
 4. Rank transcript windows using hook language, questions, speech density, sentence completeness, and overlap avoidance.
 5. Return 3 or 4 distinct 15/30-second Short candidates.
-6. Render the selected segment as 1080×1920 MP4.
+6. Render the selected segment as a 1080×1920 MP4.
 7. Burn transcript captions into the exported Short when captions are available.
 8. Stream the MP4 to Android and save it under `Downloads/ClipMint`.
 
-The semantic ranking is deliberately free and self-hostable: it does not require a paid AI API. A future optional LLM provider can be added for deeper semantic ranking without changing the rendering pipeline.
+## Important product rule
+
+ClipMint does **not** claim to know YouTube's real audience retention unless actual analytics data is supplied. Candidate cards use an **AI Selection Score** based on transcript heuristics. They do not represent measured retention, views, replay rate, or guaranteed virality.
+
+If the backend cannot process a real YouTube URL, the app reports the real error instead of silently replacing the video with a demo/offline result.
 
 ## Current feature set
 
 - Jetpack Compose Android UI
+- Material 3 components
 - YouTube URL validation
 - Real backend video metadata
-- Transcript/auto-caption extraction when YouTube provides it
+- Transcript/auto-caption extraction when available
 - Transcript-based candidate ranking
-- Hook/question/density/completeness scoring
+- AI selection scoring from explainable transcript signals
 - 3 or 4 candidate Shorts
 - 15 or 30-second selection
-- Automatic subtitle timing in the candidate metadata
+- Automatic subtitle timing in candidate metadata
 - 9:16 vertical rendering
 - Burned-in captions during server rendering
 - 720p-or-lower source selection to reduce free-host resource use
 - FFmpeg H.264/AAC output with fast-start MP4
-- Streaming MP4 responses instead of loading rendered files into Node memory
+- Streaming MP4 responses
 - Render concurrency limits and HTTP 429 handling
 - Request validation and bounded request size
 - Temporary-file cleanup
 - Android Downloads/ClipMint output
-- Offline/demo fallback when the backend is sleeping or unavailable
-- GitHub Actions backend syntax check and debug APK build
+- GitHub Actions backend container validation, Android unit tests, and debug APK build
 - Docker-ready backend
+
+## YouTube extraction reliability
+
+Modern yt-dlp YouTube extraction requires an external JavaScript runtime for full support. The backend image therefore installs **Deno** and the yt-dlp EJS components. yt-dlp retries extraction, fragments, and extractor requests and uses a conservative single-fragment concurrency setting for small/free hosting.
 
 ## Architecture
 
@@ -48,7 +56,7 @@ Android APK
 ClipMint Backend
    ├── /health
    ├── /api/analyze
-   │      ├── yt-dlp metadata
+   │      ├── yt-dlp metadata + YouTube JS challenge solving
    │      ├── yt-dlp subtitles
    │      └── transcript ranking
    └── /api/render
@@ -60,7 +68,7 @@ ClipMint Backend
 
 ## Backend
 
-Requirements: Node.js 22, Docker or local FFmpeg + yt-dlp.
+Requirements: Node.js 22, Docker, FFmpeg, yt-dlp, and a supported JavaScript runtime. The provided Dockerfile installs these dependencies for deployment.
 
 ```bash
 docker build -t clipmint-backend ./backend
@@ -87,7 +95,7 @@ The default concurrency of one render is intentional for free/small hosting.
 
 `app/build.gradle.kts` contains the backend URL in `BuildConfig.BACKEND_BASE_URL`. Use an HTTPS deployment URL for a release APK.
 
-The app first attempts real backend analysis. If the backend is unavailable, it falls back to the existing offline/demo engine so the UI remains usable instead of crashing or becoming stuck.
+The app requires the real backend for YouTube processing. Backend failures are surfaced to the user with the server's error message; there is no fake success state for unavailable backend processing.
 
 ## Build the APK
 
@@ -96,18 +104,20 @@ The `clipmint-free-apk` branch contains `.github/workflows/build-apk.yml`.
 The workflow:
 
 1. Checks `backend/server.js` with Node syntax validation.
-2. Sets up Java 17 and Gradle.
-3. Generates a debug keystore.
-4. Builds `assembleDebug`.
-5. Uploads the APK as the `shorts-maker-debug-apk` artifact.
+2. Builds the backend Docker image so deployment dependencies are validated in CI.
+3. Sets up Java 17 and Gradle.
+4. Runs Android unit tests.
+5. Generates a debug keystore.
+6. Builds `assembleDebug`.
+7. Uploads the APK as the `shorts-maker-debug-apk` artifact.
 
-## Important limitations
+## Known limitations
 
-- Transcript ranking is a local heuristic engine, not a claim of measured YouTube retention or guaranteed virality.
-- English subtitles are preferred. Videos without usable subtitles fall back to deterministic timestamp selection.
-- Face/speaker tracking is not yet implemented; the current 9:16 crop is center-based.
+- Transcript ranking is a local heuristic selection engine, not measured YouTube retention or guaranteed virality.
+- English subtitles are preferred. Videos without usable subtitles may receive deterministic timestamp selection, but the result is clearly treated as a selection signal rather than retention analytics.
+- Face/speaker-aware framing is not yet implemented; current 9:16 crop is center-based.
 - Rendering remains CPU-intensive and free hosting can sleep or throttle.
-- There is no production authentication/rate limiting yet. Do not expose a public backend without adding those controls.
+- Production authentication/rate limiting and a durable render queue still need to be added before exposing the backend as a large public service.
 - YouTube, copyright, and creator-rights rules still apply. Only process content you are allowed to download and transform.
 
 ## Roadmap
@@ -117,14 +127,16 @@ The workflow:
 - [x] 3/4 clip selection
 - [x] 15/30-second selection
 - [x] yt-dlp backend
+- [x] YouTube JS runtime support
 - [x] FFmpeg rendering
 - [x] 9:16 output
 - [x] Android MP4 download
 - [x] Backend validation and streaming
 - [x] Transcript extraction
 - [x] Transcript-based clip ranking
+- [x] Explainable AI selection score
 - [x] Automatic caption rendering
-- [x] Offline fallback
+- [x] Truthful backend failure states
 - [ ] Face/speaker-aware framing
 - [ ] Background job queue with progress events
 - [ ] Batch rendering
