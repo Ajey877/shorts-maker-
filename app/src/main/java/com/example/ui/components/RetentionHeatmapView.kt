@@ -50,14 +50,17 @@ fun RetentionHeatmapView(
   val primary = MaterialTheme.colorScheme.primary
   val secondary = MaterialTheme.colorScheme.secondary
   val tertiary = MaterialTheme.colorScheme.tertiary
-  val colors = listOf(primary, secondary, tertiary, MaterialTheme.colorScheme.primaryContainer)
+  val outline = MaterialTheme.colorScheme.outline
+  val outlineVariant = MaterialTheme.colorScheme.outlineVariant
+  val primaryContainer = MaterialTheme.colorScheme.primaryContainer
+  val colors = listOf(primary, secondary, tertiary, primaryContainer)
 
   Surface(
     modifier = modifier.fillMaxWidth(),
     shape = MaterialTheme.shapes.extraLarge,
     color = MaterialTheme.colorScheme.surfaceContainerLow,
     tonalElevation = 1.dp,
-    border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    border = androidx.compose.foundation.BorderStroke(1.dp, outlineVariant)
   ) {
     Column(Modifier.padding(16.dp)) {
       Row(
@@ -73,7 +76,7 @@ fun RetentionHeatmapView(
             Text("Internal ranking signals — not YouTube retention analytics", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
           }
         }
-        Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.primaryContainer) {
+        Surface(shape = RoundedCornerShape(10.dp), color = primaryContainer) {
           Row(Modifier.padding(horizontal = 8.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.AutoAwesome, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(14.dp))
             Spacer(Modifier.width(4.dp))
@@ -111,7 +114,7 @@ fun RetentionHeatmapView(
 
           for (i in 1..3) {
             val y = height * (i / 4f)
-            drawLine(MaterialTheme.colorScheme.outline.copy(alpha = 0.15f), Offset(0f, y), Offset(width, y), 1.dp.toPx())
+            drawLine(outline.copy(alpha = 0.15f), Offset(0f, y), Offset(width, y), 1.dp.toPx())
           }
 
           clips.forEachIndexed { index, clip ->
@@ -145,12 +148,12 @@ fun RetentionHeatmapView(
           Surface(
             onClick = { onSelectClip(clip) },
             shape = RoundedCornerShape(10.dp),
-            color = if (selected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
-            border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant),
+            color = if (selected) primaryContainer else MaterialTheme.colorScheme.surfaceContainerHighest,
+            border = androidx.compose.foundation.BorderStroke(1.dp, if (selected) primary else outlineVariant),
             modifier = Modifier.weight(1f)
           ) {
             Row(Modifier.padding(horizontal = 7.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-              Box(Modifier.size(7.dp).clip(CircleShape).background(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline))
+              Box(Modifier.size(7.dp).clip(CircleShape).background(if (selected) primary else outline))
               Spacer(Modifier.width(4.dp))
               Text("#${clip.clipIndex}", fontSize = 11.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium)
             }
