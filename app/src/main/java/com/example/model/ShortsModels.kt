@@ -21,20 +21,18 @@ data class YouTubeVideoInfo(
 }
 
 enum class CaptionStyle(val displayName: String, val badgeColor: Long) {
-  HORMOZI_BOLD("Hormozi Impact", 0xFFFFEA00), // Electric Yellow on Dark Box
-  NEON_GLOW("Neon Cyber", 0xFF00E5FF),      // Neon Cyan with Glow
-  CLEAN_MINIMAL("Clean Subtitle", 0xFFFFFFFF), // Crisp White with Drop Shadow
-  PUNCH_RED("Viral Red Box", 0xFFFF2A55)     // Crimson Highlight Box
+  HORMOZI_BOLD("Hormozi Impact", 0xFFFFEA00),
+  NEON_GLOW("Neon Cyber", 0xFF00E5FF),
+  CLEAN_MINIMAL("Clean Subtitle", 0xFFFFFFFF),
+  PUNCH_RED("Viral Red Box", 0xFFFF2A55)
 }
 
 enum class FramingMode(val displayName: String) {
-  CENTER_CROP("9:16 Smart Crop"),
-  BLUR_BACKGROUND("Fit + Blurred Background"),
-  SPLIT_SCREEN("Split Reaction / Gameplay")
+  CENTER_CROP("9:16 Crop")
 }
 
 data class SubtitlePhrase(
-  val relativeSec: Float, // Relative to clip start
+  val relativeSec: Float,
   val text: String,
   val highlightWord: String = ""
 )
@@ -42,12 +40,12 @@ data class SubtitlePhrase(
 data class ShortClip(
   val id: String = UUID.randomUUID().toString(),
   val videoId: String,
-  val clipIndex: Int, // 1, 2, 3, or 4
+  val clipIndex: Int,
   val title: String,
   val hookHeadline: String,
   val startSeconds: Int,
   val endSeconds: Int,
-  val viralityScore: Int, // 80 - 99
+  val viralityScore: Int,
   val whyViralReason: String,
   val keyTakeaway: String,
   val suggestedHashtags: List<String>,
@@ -76,8 +74,8 @@ data class ShortClip(
 }
 
 data class RetentionPoint(
-  val timeFraction: Float, // 0.0 to 1.0 along video
-  val retentionPercent: Int, // 0 to 100
+  val timeFraction: Float,
+  val retentionPercent: Int,
   val isPeak: Boolean = false,
   val associatedClipIndex: Int? = null
 )
