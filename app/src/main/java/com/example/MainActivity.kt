@@ -41,7 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.fillMaxSize
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -52,7 +52,6 @@ import com.example.ui.ShortsViewModel
 import com.example.ui.components.ExportUploadDialog
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.LibraryScreen
-import com.example.ui.theme.BrightCrimson
 import com.example.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
@@ -63,7 +62,8 @@ class MainActivity : ComponentActivity() {
     super.onCreate(savedInstanceState)
     enableEdgeToEdge()
     setContent {
-      MyApplicationTheme(darkTheme = true) {
+      MyApplicationTheme()
+      {
         val uiState by viewModel.uiState.collectAsStateWithLifecycle()
         val savedClips by viewModel.savedClips.collectAsStateWithLifecycle()
         val context = LocalContext.current
@@ -72,7 +72,7 @@ class MainActivity : ComponentActivity() {
           modifier = Modifier.fillMaxSize(),
           bottomBar = {
             NavigationBar(
-              containerColor = MaterialTheme.colorScheme.surface,
+              containerColor = MaterialTheme.colorScheme.surfaceContainer,
               contentColor = MaterialTheme.colorScheme.onSurface,
               modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)
             ) {
@@ -85,14 +85,8 @@ class MainActivity : ComponentActivity() {
                     contentDescription = "Studio"
                   )
                 },
-                label = { Text("Shorts Studio", fontWeight = if (uiState.activeTab == 0) FontWeight.Bold else FontWeight.Normal) },
-                colors = NavigationBarItemDefaults.colors(
-                  selectedIconColor = MaterialTheme.colorScheme.primary,
-                  selectedTextColor = MaterialTheme.colorScheme.primary,
-                  indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                  unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                  unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                label = { Text("Studio", fontWeight = if (uiState.activeTab == 0) FontWeight.Bold else FontWeight.Normal) },
+                colors = NavigationBarItemDefaults.colors()
               )
               NavigationBarItem(
                 selected = uiState.activeTab == 1,
@@ -103,14 +97,8 @@ class MainActivity : ComponentActivity() {
                     contentDescription = "Library"
                   )
                 },
-                label = { Text("Saved (${savedClips.size})", fontWeight = if (uiState.activeTab == 1) FontWeight.Bold else FontWeight.Normal) },
-                colors = NavigationBarItemDefaults.colors(
-                  selectedIconColor = MaterialTheme.colorScheme.primary,
-                  selectedTextColor = MaterialTheme.colorScheme.primary,
-                  indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                  unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant,
-                  unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                label = { Text("Library", fontWeight = if (uiState.activeTab == 1) FontWeight.Bold else FontWeight.Normal) },
+                colors = NavigationBarItemDefaults.colors()
               )
             }
           }
@@ -178,24 +166,16 @@ class MainActivity : ComponentActivity() {
                 onClick = {
                   val jobId = backendService.enqueueDownload(context, downloadVideo.url, downloadClip)
                   if (jobId != null) {
-                    Toast.makeText(
-                      context,
-                      "Rendering Short #${downloadClip.clipIndex}. Check Downloads when complete.",
-                      Toast.LENGTH_LONG
-                    ).show()
+                    Toast.makeText(context, "Rendering Short #${downloadClip.clipIndex}…", Toast.LENGTH_LONG).show()
                   } else {
-                    Toast.makeText(
-                      context,
-                      "Connect the app to the free Render backend first.",
-                      Toast.LENGTH_LONG
-                    ).show()
+                    Toast.makeText(context, "Render service is not configured.", Toast.LENGTH_LONG).show()
                   }
                 },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
+                containerColor = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                 modifier = Modifier
                   .align(Alignment.BottomEnd)
-                  .padding(end = 18.dp, bottom = 18.dp)
+                  .padding(16.dp)
               ) {
                 Icon(Icons.Default.Download, contentDescription = "Download selected Short")
               }
@@ -207,17 +187,22 @@ class MainActivity : ComponentActivity() {
               exit = slideOutVertically { -it } + fadeOut(),
               modifier = Modifier
                 .align(Alignment.TopCenter)
-                .padding(top = 16.dp, start = 20.dp, end = 20.dp)
+                .padding(top = 8.dp, start = 16.dp, end = 16.dp)
             ) {
               uiState.bannerNotification?.let { msg ->
-                Surface(shape = RoundedCornerShape(12.dp), color = BrightCrimson, shadowElevation = 8.dp) {
+                Surface(
+                  shape = RoundedCornerShape(16.dp),
+                  color = MaterialTheme.colorScheme.inverseSurface,
+                  tonalElevation = 3.dp,
+                  shadowElevation = 4.dp
+                ) {
                   Row(
                     modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
                     verticalAlignment = Alignment.CenterVertically
                   ) {
-                    Icon(Icons.Default.Info, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                    Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.inverseOnSurface, modifier = Modifier.size(18.dp))
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(msg, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                    Text(msg, color = MaterialTheme.colorScheme.inverseOnSurface, fontSize = 13.sp, fontWeight = FontWeight.Medium)
                   }
                 }
               }
