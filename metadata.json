@@ -1,6 +1,12 @@
 {
-  "name": "ShortsCut",
-  "description": "Extract the most watched 10-30s viral clips from full YouTube videos ready to post as YouTube Shorts.",
+  "name": "ClipMint",
+  "description": "Analyze YouTube videos, rank strong transcript moments, preview and edit Shorts, then export vertical 9:16 MP4 clips.",
   "requestFramePermissions": [],
-  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+  "majorCapabilities": [
+    "YOUTUBE_VIDEO_ANALYSIS",
+    "TRANSCRIPT_BASED_CLIP_RANKING",
+    "MEDIA3_VIDEO_PREVIEW",
+    "VERTICAL_SHORT_RENDERING",
+    "AUTOMATIC_CAPTIONS"
+  ]
 }
