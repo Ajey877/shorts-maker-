@@ -7,30 +7,37 @@ ClipMint turns a YouTube video into ready-to-share vertical Shorts from Android.
 1. Paste a supported YouTube URL.
 2. Fetch real video metadata and duration.
 3. Try to obtain English subtitles/auto-captions with yt-dlp.
-4. Rank transcript windows using hook language, questions, speech density, sentence completeness, and overlap avoidance.
+4. Rank transcript windows using hook language, questions, speech density, sentence completeness, low filler, and overlap avoidance.
 5. Return 3 or 4 distinct 15/30-second Short candidates.
-6. Open a real low-resolution preview stream for the selected segment when the backend is reachable.
+6. Open a real low-resolution Media3 preview stream for the selected segment when the backend is reachable.
 7. Trim, seek, play/pause, change caption style, framing mode, and hook text in the Android editor.
-8. Render the selected segment as 1080×1920 MP4.
-9. Burn transcript captions into the exported Short when captions are available.
-10. Stream the MP4 to Android with visible download progress and save it under `Downloads/ClipMint`.
+8. Export one selected Short or batch-export all suggested Shorts sequentially.
+9. Render each selected segment as a 1080×1920 MP4.
+10. Burn transcript captions into the exported Short when captions are available.
+11. Stream the MP4 to Android with visible download progress and save it under `Downloads/ClipMint`.
 
-The semantic ranking is deliberately free and self-hostable: it does not require a paid AI API. A future optional LLM provider can be added for deeper semantic ranking without changing the rendering pipeline.
+The semantic ranking is deliberately free and self-hostable: it does not require a paid AI API. An optional LLM provider can be added later for deeper semantic ranking without changing the rendering pipeline.
 
 ## Current feature set
 
 - Jetpack Compose + Material 3 UI
 - System/dynamic Material 3 colors on supported Android versions
 - Keyboard-safe creator workflow with IME/navigation insets
+- Dedicated Studio, Library, and Settings navigation
 - Real backend video metadata for live URLs
 - Transcript/auto-caption extraction when YouTube provides it
 - Transcript-based candidate ranking
 - Hook/question/density/completeness scoring
-- 3 or 4 candidate Shorts
+- Three/four candidate Shorts
 - 15 or 30-second selection
 - Automatic subtitle timing in candidate metadata
 - Real low-resolution Media3 preview stream
 - True playback seek/play/pause in the editor
+- Trim controls
+- Caption style controls
+- Framing controls
+- Editable hook headline
+- One-tap batch export
 - 9:16 vertical rendering
 - Burned-in captions during server rendering
 - 720p-or-lower source selection for final rendering and 360p preview streaming
@@ -39,12 +46,13 @@ The semantic ranking is deliberately free and self-hostable: it does not require
 - Streaming MP4 responses instead of loading rendered files into Node memory
 - Render concurrency limits and HTTP 429 handling
 - Request validation and bounded request size
+- Lightweight per-client API rate limiting
 - Temporary-file cleanup
 - Android Downloads/ClipMint output
 - Visible client-side download progress
 - Built-in sample presets for offline UI/demo testing
 - Honest backend errors for real URLs instead of fabricated metadata/timestamps
-- GitHub Actions backend syntax check and debug APK build
+- GitHub Actions backend syntax check, Android unit-test execution, and debug APK build
 - Docker-ready backend
 
 ## Architecture
@@ -91,6 +99,7 @@ http://localhost:10000/health
 - `FFMPEG_PATH` — FFmpeg executable path
 - `YTDLP_PATH` — yt-dlp executable path
 - `MAX_RENDER_CONCURRENCY` — simultaneous renders, default `1`
+- `RATE_LIMIT_PER_MINUTE` — backend requests per client per minute, default `12`
 - `CORS_ORIGIN` — allowed origin, default `*`
 
 The default concurrency of one render is intentional for free/small hosting.
@@ -111,17 +120,18 @@ The workflow:
 
 1. Checks `backend/server.js` with Node syntax validation.
 2. Sets up Java 17 and Gradle.
-3. Generates a debug keystore.
-4. Builds `assembleDebug`.
-5. Uploads the APK as the `shorts-maker-debug-apk` artifact.
+3. Runs Android unit tests.
+4. Generates a debug keystore.
+5. Builds `assembleDebug`.
+6. Uploads the APK as the `shorts-maker-debug-apk` artifact.
 
 ## Important limitations
 
 - The transcript scorer is a local heuristic engine, not a claim of measured YouTube retention or guaranteed virality.
 - English subtitles are preferred. Videos without usable subtitles may have fewer or no semantic candidates.
 - Face/speaker tracking is not yet implemented; the current 9:16 framing is crop-based.
-- The current render endpoint is synchronous. A persistent background job queue with stage-by-stage server progress is still a future scale improvement.
-- There is no production authentication/rate limiting yet. Do not expose a public backend without adding those controls.
+- The render endpoint remains synchronous; a persistent background worker queue with server-side stage progress is the next scale-oriented architecture upgrade.
+- The current rate limiting is intentionally lightweight in-memory protection, not a substitute for production authentication or a distributed gateway.
 - Free hosting remains CPU/RAM/bandwidth constrained and may sleep or throttle.
 - YouTube, copyright, and creator-rights rules still apply. Only process content you are allowed to download and transform.
 
@@ -142,11 +152,12 @@ The workflow:
 - [x] Material 3 Studio UI
 - [x] Real Media3 video preview
 - [x] Render/download progress
+- [x] Batch rendering
+- [x] Lightweight rate limiting
 - [ ] Face/speaker-aware framing
-- [ ] Persistent background job queue with stage progress
-- [ ] Batch rendering
+- [ ] Persistent background worker queue with stage progress
 - [ ] Optional LLM semantic ranking
-- [ ] Production authentication/rate limiting
+- [ ] Production authentication/distributed rate limiting
 
 ## Responsible use
 
