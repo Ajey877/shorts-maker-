@@ -30,22 +30,33 @@ import java.util.concurrent.TimeUnit
 class ClipMintBackendService {
     private val client = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
-        .readTimeout(180, TimeUnit.SECONDS)
+        .readTimeout(300, TimeUnit.SECONDS)
         .writeTimeout(30, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
         .build()
 
     private val baseUrl: String
         get() = BuildConfig.BACKEND_BASE_URL.trimEnd('/')
 
-    suspend fun analyze(url: String, clipCount: Int = 4, clipLength: Int = 30): BackendAnalysis? = withContext(Dispatchers.IO) {
-        if (baseUrl.contains("REPLACE", ignoreCase = true)) return@withContext null
-        val body = JSONObject().apply { put("url", url); put("clipCount", clipCount); put("clipLength", clipLength) }
-            .toString().toRequestBody("application/json".toMediaType())
+    suspend fun analyze(url: String, clipCount: Int = 4, clipLength: Int = 30): BackendAnalysis = withContext(Dispatchers.IO) {
+        if (baseUrl.contains("REPLACE", ignoreCase = true)) {
+            throw IllegalStateException("ClipMint backend URL is not configured in this build.")
+        }
+        val body = JSONObject().apply {
+            put("url", url)
+            put("clipCount", clipCount)
+            put("clipLength", clipLength)
+        }.toString().toRequestBody("application/json".toMediaType())
         val request = Request.Builder().url("$baseUrl/api/analyze").post(body).build()
         try {
             client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return@withContext null
-                val json = JSONObject(response.body?.string() ?: return@withContext null)
+                val responseText = response.body?.string().orEmpty()
+                if (!response.isSuccessful) {
+                    val serverMessage = runCatching { JSONObject(responseText).optString("error") }.getOrNull().orEmpty()
+                    val detail = if (serverMessage.isNotBlank()) serverMessage else "HTTP ${response.code}"
+                    throw IllegalStateException("Backend analysis failed: $detail")
+                }
+                val json = JSONObject(responseText)
                 val videoJson = json.getJSONObject("video")
                 val video = YouTubeVideoInfo(
                     id = videoJson.getString("id"), url = videoJson.getString("url"),
@@ -55,6 +66,7 @@ class ClipMintBackendService {
                     thumbnailUrl = videoJson.optString("thumbnailUrl", "https://img.youtube.com/vi/${videoJson.getString("id")}/hqdefault.jpg"), description = ""
                 )
                 val clipsJson = json.optJSONArray("clips") ?: JSONArray()
+                if (clipsJson.length() == 0) throw IllegalStateException("Backend returned no usable Shorts.")
                 val clips = mutableListOf<ShortClip>()
                 for (i in 0 until clipsJson.length()) {
                     val c = clipsJson.getJSONObject(i)
@@ -69,34 +81,43 @@ class ClipMintBackendService {
                     for (j in 0 until tagArray.length()) tags.add(tagArray.optString(j))
                     clips.add(ShortClip(
                         id = c.optString("id", "backend-${i + 1}"), videoId = video.id, clipIndex = c.optInt("clipIndex", i + 1),
-                        title = c.optString("title", "Viral Short #${i + 1}"), hookHeadline = c.optString("hookHeadline", "WATCH THIS"),
-                        startSeconds = c.optInt("startSeconds", 0), endSeconds = c.optInt("endSeconds", 15), viralityScore = c.optInt("viralityScore", 90),
-                        whyViralReason = c.optString("whyViralReason", "Distinct segment from the source video."),
+                        title = c.optString("title", "Short #${i + 1}"), hookHeadline = c.optString("hookHeadline", "WATCH THIS"),
+                        startSeconds = c.optInt("startSeconds", 0), endSeconds = c.optInt("endSeconds", 15), viralityScore = c.optInt("viralityScore", 0),
+                        whyViralReason = c.optString("whyViralReason", "Selected from transcript signals."),
                         keyTakeaway = c.optString("keyTakeaway", "Standalone short-form moment."),
-                        suggestedHashtags = tags.ifEmpty { listOf("#Shorts", "#viral", "#youtubeshorts") },
+                        suggestedHashtags = tags.ifEmpty { listOf("#Shorts", "#youtubeshorts") },
                         youtubeShortsDescription = c.optString("youtubeShortsDescription", "Generated Short"), sampleSubtitles = subs
                     ))
                 }
                 BackendAnalysis(video, clips)
             }
-        } catch (_: Exception) { null }
+        } catch (e: IllegalStateException) {
+            throw e
+        } catch (e: Exception) {
+            throw IllegalStateException("Could not reach ClipMint backend: ${e.message ?: "network error"}", e)
+        }
     }
 
     fun enqueueDownload(context: Context, videoUrl: String, clip: ShortClip): Long? {
         if (baseUrl.contains("REPLACE", ignoreCase = true)) return null
         val downloadUrl = Uri.parse("$baseUrl/api/render").buildUpon()
-            .appendQueryParameter("url", videoUrl).appendQueryParameter("start", clip.startSeconds.toString())
-            .appendQueryParameter("end", clip.endSeconds.toString()).build().toString()
+            .appendQueryParameter("url", videoUrl)
+            .appendQueryParameter("start", clip.startSeconds.toString())
+            .appendQueryParameter("end", clip.endSeconds.toString())
+            .appendQueryParameter("captions", "1")
+            .build().toString()
         val jobId = System.currentTimeMillis()
         CoroutineScope(Dispatchers.IO).launch {
             try {
                 val request = Request.Builder().url(downloadUrl).header("Accept", "video/mp4").header("Cache-Control", "no-cache").build()
                 client.newCall(request).execute().use { response ->
-                    if (!response.isSuccessful) {
-                        val serverMessage = response.body?.string()?.take(180).orEmpty()
-                        throw IllegalStateException("Server returned HTTP ${response.code}${if (serverMessage.isNotBlank()) ": $serverMessage" else ""}")
+                    val body = response.body
+                    if (!response.isSuccessful || body == null) {
+                        val responseText = body?.string().orEmpty()
+                        val serverMessage = runCatching { JSONObject(responseText).optString("error") }.getOrNull().orEmpty()
+                        val detail = if (serverMessage.isNotBlank()) serverMessage else "HTTP ${response.code}"
+                        throw IllegalStateException("Render failed: $detail")
                     }
-                    val body = response.body ?: throw IllegalStateException("Empty video response from backend")
                     val fileName = "short-${clip.clipIndex}-${clip.startSeconds}-${clip.endSeconds}.mp4"
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                         val values = ContentValues().apply {
