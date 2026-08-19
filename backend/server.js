@@ -15,8 +15,12 @@ const MAX_RENDER_SECONDS = 30;
 const MAX_PREVIEW_SECONDS = 30;
 const MAX_RENDER_CONCURRENCY = Math.max(1, Number(process.env.MAX_RENDER_CONCURRENCY || 1));
 const RATE_LIMIT_PER_MINUTE = Math.max(1, Number(process.env.RATE_LIMIT_PER_MINUTE || 12));
+const PREVIEW_CACHE_TTL_MS = Math.max(30_000, Number(process.env.PREVIEW_CACHE_TTL_MS || 120_000));
+const MAX_PREVIEW_CACHE = Math.max(1, Number(process.env.MAX_PREVIEW_CACHE || 8));
 let activeRenders = 0;
 const rateBuckets = new Map();
+const previewCache = new Map();
+const previewInflight = new Map();
 
 const HOOK_TERMS = /\b(how|why|secret|mistake|never|always|truth|problem|lesson|learned|changed|cost|saved|wrong|best|worst|important|actually|imagine|surprising|nobody|everyone|first|finally|before|after|because)\b/i;
 const QUESTION_TERMS = /\?|\b(why|how|what|when|where|who)\b/i;
@@ -63,6 +67,22 @@ setInterval(() => {
     if (bucket.startedAt < cutoff) rateBuckets.delete(key);
   }
 }, 60_000).unref();
+
+function previewKey(url, start, end) {
+  return `${url}|${start}|${end}`;
+}
+
+async function cleanupPreviewEntry(key, entry) {
+  previewCache.delete(key);
+  await rm(entry.workDir, { recursive: true, force: true }).catch(() => {});
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [key, entry] of previewCache.entries()) {
+    if (entry.expiresAt <= now) cleanupPreviewEntry(key, entry).catch(() => {});
+  }
+}, 30_000).unref();
 
 function getVideoId(input) {
   try {
@@ -201,11 +221,7 @@ function headlineFromText(text, index) {
 }
 
 function transcriptToSubtitles(segments, start, end) {
-  return segments.filter((s) => s.end > start && s.start < end).slice(0, 80).map((s) => ({
-    relativeSec: Math.max(0, s.start - start),
-    text: s.text,
-    highlightWord: s.text.split(/\s+/)[0] || ''
-  }));
+  return segments.filter((s) => s.end > start && s.start < end).slice(0, 80).map((s) => ({ relativeSec: Math.max(0, s.start - start), text: s.text, highlightWord: s.text.split(/\s+/)[0] || '' }));
 }
 
 function makeClips(duration, count, requestedLength, transcript) {
@@ -267,31 +283,16 @@ async function getTranscript(url, workDir) {
 
 function captionStyleFor(style) {
   switch (String(style || '').toUpperCase()) {
-    case 'NEON_GLOW':
-      return 'FontName=Arial,FontSize=18,Bold=1,Outline=2,OutlineColour=&H00111111&,PrimaryColour=&H00FFFF00&,Alignment=2,MarginV=120';
-    case 'PUNCH_RED':
-      return 'FontName=Arial,FontSize=18,Bold=1,Outline=2,OutlineColour=&H00000000&,BackColour=&H000000FF&,BorderStyle=3,Alignment=2,MarginV=120';
-    case 'CLEAN_MINIMAL':
-      return 'FontName=Arial,FontSize=17,Bold=1,Outline=1,OutlineColour=&H00000000&,PrimaryColour=&H00FFFFFF&,Alignment=2,MarginV=120';
+    case 'NEON_GLOW': return 'FontName=Arial,FontSize=18,Bold=1,Outline=2,OutlineColour=&H00111111&,PrimaryColour=&H00FFFF00&,Alignment=2,MarginV=120';
+    case 'PUNCH_RED': return 'FontName=Arial,FontSize=18,Bold=1,Outline=2,OutlineColour=&H00000000&,BackColour=&H000000FF&,BorderStyle=3,Alignment=2,MarginV=120';
+    case 'CLEAN_MINIMAL': return 'FontName=Arial,FontSize=17,Bold=1,Outline=1,OutlineColour=&H00000000&,PrimaryColour=&H00FFFFFF&,Alignment=2,MarginV=120';
     case 'HORMOZI_BOLD':
-    default:
-      return 'FontName=Arial,FontSize=19,Bold=1,Outline=3,OutlineColour=&H00000000&,PrimaryColour=&H00FFFFFF&,Alignment=2,MarginV=120';
+    default: return 'FontName=Arial,FontSize=19,Bold=1,Outline=3,OutlineColour=&H00000000&,PrimaryColour=&H00FFFFFF&,Alignment=2,MarginV=120';
   }
 }
 
 async function createRenderedFile(url, start, end, options = {}) {
-  const {
-    preview = false,
-    captions = true,
-    width = 1080,
-    height = 1920,
-    sourceHeight = 720,
-    preset = 'veryfast',
-    crf = 23,
-    audioBitrate = '128k',
-    hookText = '',
-    captionStyle = 'HORMOZI_BOLD'
-  } = options;
+  const { preview = false, captions = true, width = 1080, height = 1920, sourceHeight = 720, preset = 'veryfast', crf = 23, audioBitrate = '128k', hookText = '', captionStyle = 'HORMOZI_BOLD' } = options;
   if (activeRenders >= MAX_RENDER_CONCURRENCY) {
     const error = new Error('Renderer is busy. Please try again in a moment.');
     error.statusCode = 429;
@@ -304,13 +305,7 @@ async function createRenderedFile(url, start, end, options = {}) {
   try {
     let transcript = [];
     if (captions && !preview) transcript = await getTranscript(url, workDir);
-    await runCommand(YTDLP, [
-      '--no-playlist', '--no-warnings', '--js-runtimes', 'node',
-      '-f', `best[ext=mp4][height<=${sourceHeight}]/best[height<=${sourceHeight}]/best`,
-      '--download-sections', `*${start}-${end}`,
-      '--force-overwrites', '--no-part', '--merge-output-format', 'mp4',
-      '--ffmpeg-location', FFMPEG, '-o', inputPattern, url
-    ], { maxBuffer: 20 * 1024 * 1024, timeout: 180000 });
+    await runCommand(YTDLP, ['--no-playlist', '--no-warnings', '--js-runtimes', 'node', '-f', `best[ext=mp4][height<=${sourceHeight}]/best[height<=${sourceHeight}]/best`, '--download-sections', `*${start}-${end}`, '--force-overwrites', '--no-part', '--merge-output-format', 'mp4', '--ffmpeg-location', FFMPEG, '-o', inputPattern, url], { maxBuffer: 20 * 1024 * 1024, timeout: 180000 });
     const sourceName = readdirSync(workDir).find((name) => /^source\.(mp4|mkv|webm|mov)$/.test(name));
     if (!sourceName) throw new Error('yt-dlp completed but no source video was produced');
 
@@ -338,6 +333,40 @@ async function createRenderedFile(url, start, end, options = {}) {
   }
 }
 
+async function getOrCreatePreview(sourceUrl, start, end) {
+  const key = previewKey(sourceUrl, start, end);
+  const cached = previewCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) return cached;
+  if (cached) await cleanupPreviewEntry(key, cached);
+
+  const existing = previewInflight.get(key);
+  if (existing) return existing;
+
+  const promise = createRenderedFile(sourceUrl, start, end, {
+    preview: true,
+    captions: false,
+    width: 360,
+    height: 640,
+    sourceHeight: 360,
+    preset: 'ultrafast',
+    crf: 30,
+    audioBitrate: '96k'
+  }).then((rendered) => {
+    const entry = { ...rendered, expiresAt: Date.now() + PREVIEW_CACHE_TTL_MS };
+    previewCache.set(key, entry);
+    while (previewCache.size > MAX_PREVIEW_CACHE) {
+      const oldestKey = previewCache.keys().next().value;
+      const oldest = previewCache.get(oldestKey);
+      if (oldest) cleanupPreviewEntry(oldestKey, oldest).catch(() => {});
+      else previewCache.delete(oldestKey);
+    }
+    return entry;
+  }).finally(() => previewInflight.delete(key));
+
+  previewInflight.set(key, promise);
+  return promise;
+}
+
 function srtTime(seconds) {
   const totalMs = Math.max(0, Math.round(seconds * 1000));
   const h = Math.floor(totalMs / 3600000);
@@ -357,10 +386,10 @@ function transcriptToSrt(segments, start, end) {
   }).filter(Boolean).join('\n');
 }
 
-function streamVideoFile(req, res, filePath, cleanupDir, inline = false) {
+function streamVideoFile(req, res, filePath, cleanupDir = null, inline = false) {
   const size = statSync(filePath).size;
   const rangeHeader = req.headers.range;
-  const cleanup = () => rm(cleanupDir, { recursive: true, force: true }).catch(() => {});
+  const cleanup = cleanupDir ? () => rm(cleanupDir, { recursive: true, force: true }).catch(() => {}) : () => {};
   cors(res);
   res.setHeader('Accept-Ranges', 'bytes');
   res.setHeader('Cache-Control', 'no-store');
@@ -406,20 +435,11 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   try {
-    const protectedPaths = new Set(['/api/analyze', '/api/render', '/api/preview']);
-    if (protectedPaths.has(url.pathname) && ['GET', 'POST', 'HEAD'].includes(req.method)) {
+    if (url.pathname === '/api/analyze' && req.method === 'POST') {
       const limited = rateLimit(req);
       res.setHeader('X-RateLimit-Limit', RATE_LIMIT_PER_MINUTE);
       res.setHeader('X-RateLimit-Remaining', limited.remaining ?? 0);
-      if (!limited.allowed) {
-        res.setHeader('Retry-After', limited.retryAfter);
-        return json(res, 429, { error: 'Too many requests. Please try again shortly.', retryAfterSeconds: limited.retryAfter });
-      }
-    }
-    if (url.pathname === '/health') {
-      return json(res, 200, { ok: true, service: 'clipmint-render', ffmpeg: true, ytdlp: true, activeRenders, maxRenderConcurrency: MAX_RENDER_CONCURRENCY, rateLimitPerMinute: RATE_LIMIT_PER_MINUTE });
-    }
-    if (url.pathname === '/api/analyze' && req.method === 'POST') {
+      if (!limited.allowed) { res.setHeader('Retry-After', limited.retryAfter); return json(res, 429, { error: 'Too many requests. Please try again shortly.', retryAfterSeconds: limited.retryAfter }); }
       const body = await readJsonBody(req);
       const sourceUrl = String(body.url || '').trim();
       const id = getVideoId(sourceUrl);
@@ -435,16 +455,29 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { video: { id, url: sourceUrl, title: info.title || 'YouTube video', channelName: info.uploader || info.channel || 'YouTube creator', durationSeconds: duration, thumbnailUrl: info.thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg` }, transcriptAvailable: transcript.length > 0, clips: makeClips(duration, count, length, transcript) });
       } finally { await rm(workDir, { recursive: true, force: true }).catch(() => {}); }
     }
+
     if (url.pathname === '/api/preview' && (req.method === 'GET' || req.method === 'HEAD')) {
       const sourceUrl = url.searchParams.get('url') || '';
       const start = Math.max(0, Math.floor(validateFiniteNumber(url.searchParams.get('start'), 0)));
       const end = Math.floor(validateFiniteNumber(url.searchParams.get('end'), start + 15));
       if (!getVideoId(sourceUrl)) return json(res, 400, { error: 'Invalid YouTube URL.' });
       if (end <= start || end - start > MAX_PREVIEW_SECONDS) return json(res, 400, { error: `Preview length must be between 1 and ${MAX_PREVIEW_SECONDS} seconds.` });
-      const rendered = await createRenderedFile(sourceUrl, start, end, { preview: true, captions: false, width: 360, height: 640, sourceHeight: 360, preset: 'ultrafast', crf: 30, audioBitrate: '96k' });
-      return streamVideoFile(req, res, rendered.output, rendered.workDir, true);
+      const key = previewKey(sourceUrl, start, end);
+      if (!previewCache.has(key)) {
+        const limited = rateLimit(req);
+        res.setHeader('X-RateLimit-Limit', RATE_LIMIT_PER_MINUTE);
+        res.setHeader('X-RateLimit-Remaining', limited.remaining ?? 0);
+        if (!limited.allowed) { res.setHeader('Retry-After', limited.retryAfter); return json(res, 429, { error: 'Too many preview generations. Please try again shortly.', retryAfterSeconds: limited.retryAfter }); }
+      }
+      const rendered = await getOrCreatePreview(sourceUrl, start, end);
+      return streamVideoFile(req, res, rendered.output, null, true);
     }
+
     if (url.pathname === '/api/render' && req.method === 'GET') {
+      const limited = rateLimit(req);
+      res.setHeader('X-RateLimit-Limit', RATE_LIMIT_PER_MINUTE);
+      res.setHeader('X-RateLimit-Remaining', limited.remaining ?? 0);
+      if (!limited.allowed) { res.setHeader('Retry-After', limited.retryAfter); return json(res, 429, { error: 'Too many render requests. Please try again shortly.', retryAfterSeconds: limited.retryAfter }); }
       const sourceUrl = url.searchParams.get('url') || '';
       const start = Math.max(0, Math.floor(validateFiniteNumber(url.searchParams.get('start'), 0)));
       const end = Math.floor(validateFiniteNumber(url.searchParams.get('end'), start + 15));
@@ -456,6 +489,21 @@ const server = http.createServer(async (req, res) => {
       const rendered = await createRenderedFile(sourceUrl, start, end, { captions, hookText, captionStyle });
       return streamVideoFile(req, res, rendered.output, rendered.workDir, false);
     }
+
+    if (url.pathname === '/health') {
+      return json(res, 200, {
+        ok: true,
+        service: 'clipmint-render',
+        ffmpeg: true,
+        ytdlp: true,
+        activeRenders,
+        maxRenderConcurrency: MAX_RENDER_CONCURRENCY,
+        rateLimitPerMinute: RATE_LIMIT_PER_MINUTE,
+        previewCacheSize: previewCache.size,
+        previewCacheTtlSeconds: Math.floor(PREVIEW_CACHE_TTL_MS / 1000)
+      });
+    }
+
     return json(res, 404, { error: 'Not found' });
   } catch (error) {
     console.error('ClipMint request failed:', error);
