@@ -21,10 +21,10 @@ import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material3.AssistChip
-import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -38,6 +38,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -98,6 +99,7 @@ fun HomeScreen(
   onCopyMetadata: (ShortClip) -> Unit,
   onUploadShorts: (ShortClip) -> Unit,
   onShareClip: (ShortClip) -> Unit,
+  onExportAll: () -> Unit,
   onOpenLibrary: () -> Unit,
   modifier: Modifier = Modifier
 ) {
@@ -123,9 +125,7 @@ fun HomeScreen(
           }
         },
         actions = {
-          IconButton(onClick = onOpenLibrary) {
-            Icon(Icons.Default.Bookmarks, contentDescription = "Open library")
-          }
+          IconButton(onClick = onOpenLibrary) { Icon(Icons.Default.Bookmarks, contentDescription = "Open library") }
         },
         colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
       )
@@ -145,7 +145,7 @@ fun HomeScreen(
         shape = MaterialTheme.shapes.extraLarge
       ) {
         Column(Modifier.padding(16.dp)) {
-          Text("Create a Short", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+          Text("Create Shorts", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
           Text(
             "Paste a YouTube link. ClipMint finds strong moments, prepares captions, and opens them in the editor.",
             style = MaterialTheme.typography.bodyMedium,
@@ -163,17 +163,13 @@ fun HomeScreen(
             trailingIcon = {
               Row {
                 if (urlInput.isNotEmpty()) {
-                  IconButton(onClick = { onUrlInputChanged("") }) {
-                    Icon(Icons.Default.Clear, contentDescription = "Clear URL")
-                  }
+                  IconButton(onClick = { onUrlInputChanged("") }) { Icon(Icons.Default.Clear, contentDescription = "Clear URL") }
                 }
                 IconButton(onClick = {
                   val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                   val pasted = clipboard.primaryClip?.takeIf { it.itemCount > 0 }?.getItemAt(0)?.text?.toString().orEmpty()
                   if (pasted.isNotBlank()) onUrlInputChanged(pasted)
-                }) {
-                  Icon(Icons.Default.ContentPaste, contentDescription = "Paste URL")
-                }
+                }) { Icon(Icons.Default.ContentPaste, contentDescription = "Paste URL") }
               }
             },
             label = { Text("YouTube URL") },
@@ -184,10 +180,7 @@ fun HomeScreen(
 
           Spacer(Modifier.height(8.dp))
           Text("Output", style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
-          Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-          ) {
+          Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             FilterChip(selected = clipCount == 3, onClick = { onClipCountChanged(3) }, label = { Text("3 Shorts") })
             FilterChip(selected = clipCount == 4, onClick = { onClipCountChanged(4) }, label = { Text("4 Shorts") })
             FilterChip(selected = clipLength == 15, onClick = { onClipLengthChanged(15) }, label = { Text("15 sec") })
@@ -220,10 +213,7 @@ fun HomeScreen(
             Text(analysisStatusText.ifBlank { "Working…" }, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
           }
 
-          Row(
-            Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-          ) {
+          Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             AssistChip(onClick = {}, label = { Text("Free / self-hostable") }, leadingIcon = { Icon(Icons.Default.AutoAwesome, null, Modifier.size(16.dp)) })
             GeminiClipperService.PRESETS.take(2).forEach { preset ->
               AssistChip(onClick = { onLoadPreset(preset.url) }, label = { Text(preset.title.take(20) + "…") })
@@ -259,7 +249,14 @@ fun HomeScreen(
           onSelectClip = onSelectClip
         )
 
-        Text("Suggested Shorts", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+          Text("Suggested Shorts", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+          OutlinedButton(onClick = onExportAll) {
+            Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(5.dp))
+            Text("Export all")
+          }
+        }
         Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           clips.forEach { clip ->
             FilterChip(
