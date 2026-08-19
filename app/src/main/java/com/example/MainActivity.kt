@@ -43,7 +43,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.remote.ClipMintBackendService
 import com.example.ui.ShortsViewModel
@@ -192,7 +191,7 @@ class MainActivity : ComponentActivity() {
                     Text("Rendering Short…", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
                     Text(" ${(renderProgress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 8.dp))
                   }
-                  LinearProgressIndicator(progress = { renderProgress }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                  LinearProgressIndicator(progress = renderProgress, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
                   Text("Keep ClipMint open until the download finishes.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
                 }
               }
