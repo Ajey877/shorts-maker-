@@ -147,15 +147,13 @@ function cleanTranscript(segments) {
 
 function scoreCandidate(text, duration, start, end) {
   const words = text.trim().split(/\s+/).filter(Boolean);
-  const wordCount = words.length;
-  const density = Math.min(1, wordCount / Math.max(1, duration * 2.2));
+  const density = Math.min(1, words.length / Math.max(1, duration * 2.2));
   const hook = HOOK_TERMS.test(text) ? 1 : 0;
   const question = QUESTION_TERMS.test(text) ? 1 : 0;
   const sentenceEnd = /[.!?]$/.test(text.trim()) ? 1 : 0;
-  const filler = /\b(um|uh|you know|like)\b/gi;
-  const fillerPenalty = Math.min(0.3, (text.match(filler) || []).length * 0.04);
+  const fillerPenalty = Math.min(0.3, (text.match(/\b(um|uh|you know|like)\b/gi) || []).length * 0.04);
   const score = Math.round(Math.max(0, Math.min(100, 45 + density * 22 + hook * 15 + question * 5 + sentenceEnd * 10 - fillerPenalty * 20)));
-  return { score, wordCount, start, end };
+  return { score, start, end };
 }
 
 function buildCandidates(segments, duration, requestedLength, count) {
@@ -249,20 +247,14 @@ async function runCommand(file, args, options = {}) {
 }
 
 async function getVideoInfo(url) {
-  const { stdout } = await runCommand(YTDLP, [
-    '--dump-single-json', '--skip-download', '--no-playlist', '--no-warnings', '--js-runtimes', 'node', url
-  ], { maxBuffer: 20 * 1024 * 1024, timeout: 90000 });
+  const { stdout } = await runCommand(YTDLP, ['--dump-single-json', '--skip-download', '--no-playlist', '--no-warnings', '--js-runtimes', 'node', url], { maxBuffer: 20 * 1024 * 1024, timeout: 90000 });
   return JSON.parse(stdout);
 }
 
 async function getTranscript(url, workDir) {
   const pattern = join(workDir, 'subs.%(ext)s');
   try {
-    await runCommand(YTDLP, [
-      '--skip-download', '--no-playlist', '--no-warnings', '--js-runtimes', 'node',
-      '--write-auto-subs', '--write-subs', '--sub-langs', 'en.*,en', '--sub-format', 'vtt',
-      '--force-overwrites', '-o', pattern, url
-    ], { maxBuffer: 12 * 1024 * 1024, timeout: 120000 });
+    await runCommand(YTDLP, ['--skip-download', '--no-playlist', '--no-warnings', '--js-runtimes', 'node', '--write-auto-subs', '--write-subs', '--sub-langs', 'en.*,en', '--sub-format', 'vtt', '--force-overwrites', '-o', pattern, url], { maxBuffer: 12 * 1024 * 1024, timeout: 120000 });
     const subtitleFile = readdirSync(workDir).find((name) => name.endsWith('.vtt'));
     if (!subtitleFile) return [];
     const fs = require('fs');
@@ -273,8 +265,33 @@ async function getTranscript(url, workDir) {
   }
 }
 
+function captionStyleFor(style) {
+  switch (String(style || '').toUpperCase()) {
+    case 'NEON_GLOW':
+      return 'FontName=Arial,FontSize=18,Bold=1,Outline=2,OutlineColour=&H00111111&,PrimaryColour=&H00FFFF00&,Alignment=2,MarginV=120';
+    case 'PUNCH_RED':
+      return 'FontName=Arial,FontSize=18,Bold=1,Outline=2,OutlineColour=&H00000000&,BackColour=&H000000FF&,BorderStyle=3,Alignment=2,MarginV=120';
+    case 'CLEAN_MINIMAL':
+      return 'FontName=Arial,FontSize=17,Bold=1,Outline=1,OutlineColour=&H00000000&,PrimaryColour=&H00FFFFFF&,Alignment=2,MarginV=120';
+    case 'HORMOZI_BOLD':
+    default:
+      return 'FontName=Arial,FontSize=19,Bold=1,Outline=3,OutlineColour=&H00000000&,PrimaryColour=&H00FFFFFF&,Alignment=2,MarginV=120';
+  }
+}
+
 async function createRenderedFile(url, start, end, options = {}) {
-  const { preview = false, captions = true, width = 1080, height = 1920, sourceHeight = 720, preset = 'veryfast', crf = 23, audioBitrate = '128k' } = options;
+  const {
+    preview = false,
+    captions = true,
+    width = 1080,
+    height = 1920,
+    sourceHeight = 720,
+    preset = 'veryfast',
+    crf = 23,
+    audioBitrate = '128k',
+    hookText = '',
+    captionStyle = 'HORMOZI_BOLD'
+  } = options;
   if (activeRenders >= MAX_RENDER_CONCURRENCY) {
     const error = new Error('Renderer is busy. Please try again in a moment.');
     error.statusCode = 429;
@@ -296,20 +313,22 @@ async function createRenderedFile(url, start, end, options = {}) {
     ], { maxBuffer: 20 * 1024 * 1024, timeout: 180000 });
     const sourceName = readdirSync(workDir).find((name) => /^source\.(mp4|mkv|webm|mov)$/.test(name));
     if (!sourceName) throw new Error('yt-dlp completed but no source video was produced');
+
     const filters = [`scale=${width}:${height}:force_original_aspect_ratio=increase`, `crop=${width}:${height}`];
+    if (hookText && !preview) {
+      const hookPath = join(workDir, 'hook.txt');
+      await writeFile(hookPath, String(hookText).replace(/[\r\n]+/g, ' ').slice(0, 180), 'utf8');
+      filters.push(`drawtext=textfile=${hookPath}:fontcolor=white:fontsize=48:fontweight=bold:box=1:boxcolor=black@0.72:boxborderw=16:x=(w-text_w)/2:y=90`);
+    }
     if (captions && !preview) {
       const clipSubs = transcriptToSrt(transcript, start, end);
       if (clipSubs.trim()) {
         const subtitlePath = join(workDir, 'captions.srt');
         await writeFile(subtitlePath, clipSubs, 'utf8');
-        filters.push(`subtitles=${subtitlePath}:force_style='FontName=Arial,FontSize=18,Bold=1,Outline=2,Alignment=2,MarginV=120'`);
+        filters.push(`subtitles=${subtitlePath}:force_style='${captionStyleFor(captionStyle)}'`);
       }
     }
-    await runCommand(FFMPEG, [
-      '-y', '-i', join(workDir, sourceName), '-t', String(end - start),
-      '-vf', filters.join(','), '-c:v', 'libx264', '-preset', preset, '-crf', String(crf),
-      '-c:a', 'aac', '-b:a', audioBitrate, '-movflags', '+faststart', output
-    ], { maxBuffer: 10 * 1024 * 1024, timeout: preview ? 180000 : 240000 });
+    await runCommand(FFMPEG, ['-y', '-i', join(workDir, sourceName), '-t', String(end - start), '-vf', filters.join(','), '-c:v', 'libx264', '-preset', preset, '-crf', String(crf), '-c:a', 'aac', '-b:a', audioBitrate, '-movflags', '+faststart', output], { maxBuffer: 10 * 1024 * 1024, timeout: preview ? 180000 : 240000 });
     return { workDir, output };
   } catch (error) {
     await rm(workDir, { recursive: true, force: true }).catch(() => {});
@@ -386,7 +405,6 @@ const server = http.createServer(async (req, res) => {
   cors(res);
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-
   try {
     const protectedPaths = new Set(['/api/analyze', '/api/render', '/api/preview']);
     if (protectedPaths.has(url.pathname) && ['GET', 'POST', 'HEAD'].includes(req.method)) {
@@ -398,11 +416,9 @@ const server = http.createServer(async (req, res) => {
         return json(res, 429, { error: 'Too many requests. Please try again shortly.', retryAfterSeconds: limited.retryAfter });
       }
     }
-
     if (url.pathname === '/health') {
       return json(res, 200, { ok: true, service: 'clipmint-render', ffmpeg: true, ytdlp: true, activeRenders, maxRenderConcurrency: MAX_RENDER_CONCURRENCY, rateLimitPerMinute: RATE_LIMIT_PER_MINUTE });
     }
-
     if (url.pathname === '/api/analyze' && req.method === 'POST') {
       const body = await readJsonBody(req);
       const sourceUrl = String(body.url || '').trim();
@@ -416,14 +432,9 @@ const server = http.createServer(async (req, res) => {
       const workDir = await mkdtemp(join(tmpdir(), 'clipmint-analysis-'));
       try {
         const transcript = await getTranscript(sourceUrl, workDir);
-        return json(res, 200, {
-          video: { id, url: sourceUrl, title: info.title || 'YouTube video', channelName: info.uploader || info.channel || 'YouTube creator', durationSeconds: duration, thumbnailUrl: info.thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg` },
-          transcriptAvailable: transcript.length > 0,
-          clips: makeClips(duration, count, length, transcript)
-        });
+        return json(res, 200, { video: { id, url: sourceUrl, title: info.title || 'YouTube video', channelName: info.uploader || info.channel || 'YouTube creator', durationSeconds: duration, thumbnailUrl: info.thumbnail || `https://i.ytimg.com/vi/${id}/hqdefault.jpg` }, transcriptAvailable: transcript.length > 0, clips: makeClips(duration, count, length, transcript) });
       } finally { await rm(workDir, { recursive: true, force: true }).catch(() => {}); }
     }
-
     if (url.pathname === '/api/preview' && (req.method === 'GET' || req.method === 'HEAD')) {
       const sourceUrl = url.searchParams.get('url') || '';
       const start = Math.max(0, Math.floor(validateFiniteNumber(url.searchParams.get('start'), 0)));
@@ -433,18 +444,18 @@ const server = http.createServer(async (req, res) => {
       const rendered = await createRenderedFile(sourceUrl, start, end, { preview: true, captions: false, width: 360, height: 640, sourceHeight: 360, preset: 'ultrafast', crf: 30, audioBitrate: '96k' });
       return streamVideoFile(req, res, rendered.output, rendered.workDir, true);
     }
-
     if (url.pathname === '/api/render' && req.method === 'GET') {
       const sourceUrl = url.searchParams.get('url') || '';
       const start = Math.max(0, Math.floor(validateFiniteNumber(url.searchParams.get('start'), 0)));
       const end = Math.floor(validateFiniteNumber(url.searchParams.get('end'), start + 15));
       const captions = url.searchParams.get('captions') !== '0';
+      const hookText = String(url.searchParams.get('hook') || '').trim().slice(0, 180);
+      const captionStyle = String(url.searchParams.get('captionStyle') || 'HORMOZI_BOLD').trim();
       if (!getVideoId(sourceUrl)) return json(res, 400, { error: 'Invalid YouTube URL.' });
       if (end <= start || end - start > MAX_RENDER_SECONDS) return json(res, 400, { error: `Clip length must be between 1 and ${MAX_RENDER_SECONDS} seconds.` });
-      const rendered = await createRenderedFile(sourceUrl, start, end, { captions });
+      const rendered = await createRenderedFile(sourceUrl, start, end, { captions, hookText, captionStyle });
       return streamVideoFile(req, res, rendered.output, rendered.workDir, false);
     }
-
     return json(res, 404, { error: 'Not found' });
   } catch (error) {
     console.error('ClipMint request failed:', error);
