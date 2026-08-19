@@ -18,7 +18,6 @@ import com.example.model.FramingMode
 import com.example.model.RetentionPoint
 import com.example.model.ShortClip
 import com.example.model.YouTubeVideoInfo
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -26,18 +25,20 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 data class ShortsUiState(
   val urlInput: String = "",
+  val clipCount: Int = 4,
+  val clipLength: Int = 30,
   val isAnalyzing: Boolean = false,
   val analysisStatusText: String = "",
+  val transcriptAvailable: Boolean = false,
   val currentVideo: YouTubeVideoInfo? = null,
   val clips: List<ShortClip> = emptyList(),
   val selectedClip: ShortClip? = null,
   val retentionPoints: List<RetentionPoint> = emptyList(),
-  val isPlaying: Boolean = true,
+  val isPlaying: Boolean = false,
   val playbackPositionSec: Float = 0f,
   val captionStyle: CaptionStyle = CaptionStyle.HORMOZI_BOLD,
   val framingMode: FramingMode = FramingMode.CENTER_CROP,
@@ -52,7 +53,6 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
   private val _uiState = MutableStateFlow(ShortsUiState())
   val uiState: StateFlow<ShortsUiState> = _uiState.asStateFlow()
   val savedClips: StateFlow<List<ClipEntity>>
-  private var playbackJob: Job? = null
 
   init {
     val db = AppDatabase.getDatabase(application)
@@ -64,7 +64,17 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
     )
   }
 
-  fun onUrlInputChanged(newUrl: String) { _uiState.update { it.copy(urlInput = newUrl) } }
+  fun onUrlInputChanged(newUrl: String) {
+    _uiState.update { it.copy(urlInput = newUrl) }
+  }
+
+  fun setClipCount(count: Int) {
+    _uiState.update { it.copy(clipCount = count.coerceIn(3, 4)) }
+  }
+
+  fun setClipLength(length: Int) {
+    _uiState.update { it.copy(clipLength = if (length == 15) 15 else 30) }
+  }
 
   fun loadPreset(url: String) {
     _uiState.update { it.copy(urlInput = url) }
@@ -79,10 +89,12 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     viewModelScope.launch {
+      val count = _uiState.value.clipCount
+      val length = _uiState.value.clipLength
       _uiState.update {
         it.copy(
           isAnalyzing = true,
-          analysisStatusText = "Connecting to ClipMint backend…",
+          analysisStatusText = "Connecting to ClipMint…",
           bannerNotification = null,
           clips = emptyList(),
           selectedClip = null,
@@ -92,19 +104,25 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
       }
 
       try {
-        delay(200)
-        val result = repository.analyzeVideo(input)
-          ?: throw IllegalStateException("ClipMint backend is unavailable. Check the backend URL and try again.")
+        delay(150)
+        _uiState.update { it.copy(analysisStatusText = "Reading video metadata…") }
+        val result = repository.analyzeVideo(input, count, length)
+          ?: throw IllegalStateException("Couldn't analyze this YouTube URL. Make sure the backend is online and the URL is valid.")
 
-        _uiState.update { it.copy(currentVideo = result.video, analysisStatusText = "Reading video metadata…") }
-        delay(300)
-        _uiState.update { it.copy(analysisStatusText = "Finding strong candidate moments…") }
+        _uiState.update {
+          it.copy(
+            currentVideo = result.video,
+            transcriptAvailable = result.transcriptAvailable,
+            analysisStatusText = if (result.transcriptAvailable) "Ranking transcript moments…" else "Finding safe clip ranges…"
+          )
+        }
+        delay(250)
 
-        val generatedClips = result.clips
-        if (generatedClips.isEmpty()) throw IllegalStateException("No usable Shorts could be generated from this video.")
+        val generatedClips = result.clips.take(count)
+        if (generatedClips.isEmpty()) throw IllegalStateException("No usable Shorts were found in this video.")
 
         val retention = repository.getRetentionCurve(generatedClips)
-        val firstClip = generatedClips.firstOrNull()
+        val firstClip = generatedClips.first()
         _uiState.update {
           it.copy(
             isAnalyzing = false,
@@ -112,13 +130,12 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
             clips = generatedClips,
             selectedClip = firstClip,
             retentionPoints = retention,
-            customHookHeadline = firstClip?.hookHeadline.orEmpty(),
+            customHookHeadline = firstClip.hookHeadline,
             playbackPositionSec = 0f,
-            isPlaying = true,
+            isPlaying = false,
             analysisStatusText = ""
           )
         }
-        startPlaybackLoop()
       } catch (error: Exception) {
         _uiState.update {
           it.copy(
@@ -127,7 +144,9 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
             currentVideo = null,
             clips = emptyList(),
             selectedClip = null,
-            retentionPoints = emptyList()
+            retentionPoints = emptyList(),
+            transcriptAvailable = false,
+            isPlaying = false
           )
         }
         showNotification(error.message ?: "Could not analyze this YouTube video.")
@@ -136,24 +155,28 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
   }
 
   fun selectClip(clip: ShortClip) {
-    _uiState.update { it.copy(selectedClip = clip, customHookHeadline = clip.hookHeadline, playbackPositionSec = 0f, isPlaying = true) }
-    startPlaybackLoop()
+    _uiState.update {
+      it.copy(
+        selectedClip = clip,
+        customHookHeadline = clip.hookHeadline,
+        playbackPositionSec = 0f,
+        isPlaying = false
+      )
+    }
+  }
+
+  fun setPlaybackPosition(seconds: Float) {
+    val duration = _uiState.value.selectedClip?.durationSeconds?.toFloat() ?: return
+    _uiState.update { it.copy(playbackPositionSec = seconds.coerceIn(0f, duration)) }
+  }
+
+  fun setPlaying(playing: Boolean) {
+    _uiState.update { it.copy(isPlaying = playing) }
   }
 
   fun setCaptionStyle(style: CaptionStyle) { _uiState.update { it.copy(captionStyle = style) } }
   fun setFramingMode(mode: FramingMode) { _uiState.update { it.copy(framingMode = mode) } }
   fun onCustomHookChanged(hook: String) { _uiState.update { it.copy(customHookHeadline = hook) } }
-
-  fun togglePlayPause() {
-    val newPlaying = !_uiState.value.isPlaying
-    _uiState.update { it.copy(isPlaying = newPlaying) }
-    if (newPlaying) startPlaybackLoop() else playbackJob?.cancel()
-  }
-
-  fun seekTo(relativeSec: Float) {
-    val clip = _uiState.value.selectedClip ?: return
-    _uiState.update { it.copy(playbackPositionSec = relativeSec.coerceIn(0f, clip.durationSeconds.toFloat())) }
-  }
 
   fun updateClipTrim(newStart: Int, newEnd: Int) {
     val currentClip = _uiState.value.selectedClip ?: return
@@ -164,23 +187,9 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
       it.copy(
         selectedClip = updatedClip,
         clips = it.clips.map { item -> if (item.id == updatedClip.id) updatedClip else item },
-        playbackPositionSec = 0f
+        playbackPositionSec = 0f,
+        isPlaying = false
       )
-    }
-  }
-
-  private fun startPlaybackLoop() {
-    playbackJob?.cancel()
-    playbackJob = viewModelScope.launch {
-      while (isActive) {
-        delay(100)
-        val state = _uiState.value
-        if (state.isPlaying && state.selectedClip != null) {
-          val duration = state.selectedClip.durationSeconds.toFloat().coerceAtLeast(1f)
-          val nextPos = if (state.playbackPositionSec + 0.1f >= duration) 0f else state.playbackPositionSec + 0.1f
-          _uiState.update { it.copy(playbackPositionSec = nextPos) }
-        }
-      }
     }
   }
 
@@ -189,7 +198,7 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
     val video = _uiState.value.currentVideo ?: return
     viewModelScope.launch {
       repository.saveClip(clip, video)
-      showNotification("Saved to Shorts Library.")
+      showNotification("Saved to ClipMint Library.")
     }
   }
 
@@ -218,7 +227,7 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
       appendLine("Timestamp range: ${clip.rangeFormatted}")
     }
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    clipboard.setPrimaryClip(ClipData.newPlainText("Shorts Metadata", textToCopy))
+    clipboard.setPrimaryClip(ClipData.newPlainText("ClipMint metadata", textToCopy))
     Toast.makeText(context, "Metadata copied.", Toast.LENGTH_SHORT).show()
   }
 
@@ -240,7 +249,7 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
 
   fun shareShortsClip(context: Context, clip: ShortClip) {
     val shareBody = """
-      🎬 ClipMint Short
+      ClipMint Short
 
       Title: ${clip.title}
       Segment: ${clip.rangeFormatted}
@@ -263,10 +272,5 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
       delay(3500)
       _uiState.update { it.copy(bannerNotification = null) }
     }
-  }
-
-  override fun onCleared() {
-    playbackJob?.cancel()
-    super.onCleared()
   }
 }
