@@ -25,7 +25,7 @@ function cors(res) {
   res.setHeader('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS,HEAD');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Range, Accept');
-  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type, Retry-After');
+  res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges, Content-Type, Retry-After, X-RateLimit-Limit, X-RateLimit-Remaining');
   res.setHeader('X-Content-Type-Options', 'nosniff');
 }
 
@@ -51,7 +51,9 @@ function rateLimit(req) {
   }
   bucket.count += 1;
   rateBuckets.set(key, bucket);
-  if (bucket.count > RATE_LIMIT_PER_MINUTE) return { allowed: false, retryAfter: Math.max(1, Math.ceil((60_000 - (now - bucket.startedAt)) / 1000)) };
+  if (bucket.count > RATE_LIMIT_PER_MINUTE) {
+    return { allowed: false, retryAfter: Math.max(1, Math.ceil((60_000 - (now - bucket.startedAt)) / 1000)) };
+  }
   return { allowed: true, remaining: Math.max(0, RATE_LIMIT_PER_MINUTE - bucket.count) };
 }
 
@@ -272,17 +274,7 @@ async function getTranscript(url, workDir) {
 }
 
 async function createRenderedFile(url, start, end, options = {}) {
-  const {
-    preview = false,
-    captions = true,
-    width = 1080,
-    height = 1920,
-    sourceHeight = 720,
-    preset = 'veryfast',
-    crf = 23,
-    audioBitrate = '128k'
-  } = options;
-
+  const { preview = false, captions = true, width = 1080, height = 1920, sourceHeight = 720, preset = 'veryfast', crf = 23, audioBitrate = '128k' } = options;
   if (activeRenders >= MAX_RENDER_CONCURRENCY) {
     const error = new Error('Renderer is busy. Please try again in a moment.');
     error.statusCode = 429;
@@ -304,7 +296,6 @@ async function createRenderedFile(url, start, end, options = {}) {
     ], { maxBuffer: 20 * 1024 * 1024, timeout: 180000 });
     const sourceName = readdirSync(workDir).find((name) => /^source\.(mp4|mkv|webm|mov)$/.test(name));
     if (!sourceName) throw new Error('yt-dlp completed but no source video was produced');
-
     const filters = [`scale=${width}:${height}:force_original_aspect_ratio=increase`, `crop=${width}:${height}`];
     if (captions && !preview) {
       const clipSubs = transcriptToSrt(transcript, start, end);
@@ -397,7 +388,8 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
   try {
-    if (['POST'].includes(req.method) && ['/api/analyze', '/api/render', '/api/preview'].includes(url.pathname)) {
+    const protectedPaths = new Set(['/api/analyze', '/api/render', '/api/preview']);
+    if (protectedPaths.has(url.pathname) && ['GET', 'POST', 'HEAD'].includes(req.method)) {
       const limited = rateLimit(req);
       res.setHeader('X-RateLimit-Limit', RATE_LIMIT_PER_MINUTE);
       res.setHeader('X-RateLimit-Remaining', limited.remaining ?? 0);
