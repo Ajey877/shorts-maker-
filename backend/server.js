@@ -1,8 +1,8 @@
 const http = require('http');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
-const { mkdtemp, readFile, rm } = require('fs/promises');
-const { readdirSync } = require('fs');
+const { mkdtemp, rm } = require('fs/promises');
+const { createReadStream, readdirSync, statSync } = require('fs');
 const { join } = require('path');
 const { tmpdir } = require('os');
 
@@ -10,9 +10,13 @@ const execFileAsync = promisify(execFile);
 const PORT = Number(process.env.PORT || 10000);
 const FFMPEG = process.env.FFMPEG_PATH || '/usr/bin/ffmpeg';
 const YTDLP = process.env.YTDLP_PATH || '/usr/local/bin/yt-dlp';
+const MAX_BODY_BYTES = 16 * 1024;
+const MAX_RENDER_SECONDS = 30;
+const MAX_RENDER_CONCURRENCY = Math.max(1, Number(process.env.MAX_RENDER_CONCURRENCY || 1));
+let activeRenders = 0;
 
 function cors(res) {
-  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Origin', process.env.CORS_ORIGIN || '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 }
@@ -20,7 +24,7 @@ function cors(res) {
 function json(res, status, value) {
   cors(res);
   const body = JSON.stringify(value);
-  res.writeHead(status, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+  res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
   res.end(body);
 }
 
@@ -36,6 +40,11 @@ function getVideoId(input) {
     }
   } catch {}
   return null;
+}
+
+function validateFiniteNumber(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 function formatTime(seconds) {
@@ -99,15 +108,21 @@ async function getVideoInfo(url) {
 }
 
 async function renderClip(url, start, end) {
+  if (activeRenders >= MAX_RENDER_CONCURRENCY) {
+    const error = new Error('Renderer is busy. Please try again in a moment.');
+    error.statusCode = 429;
+    throw error;
+  }
+
+  activeRenders += 1;
   const workDir = await mkdtemp(join(tmpdir(), 'clipmint-'));
   const inputPattern = join(workDir, 'source.%(ext)s');
   const output = join(workDir, 'clip.mp4');
+
   try {
-    // Use a broadly compatible MP4 format first. This avoids slow/high-memory
-    // separate video+audio downloads on Render's free instance.
     await runCommand(YTDLP, [
       '--no-playlist', '--no-warnings', '--js-runtimes', 'node',
-      '-f', 'best[ext=mp4][height<=1080]/best[height<=1080]/best',
+      '-f', 'best[ext=mp4][height<=720]/best[height<=720]/best',
       '--download-sections', `*${start}-${end}`,
       '--force-overwrites', '--no-part',
       '--merge-output-format', 'mp4',
@@ -127,33 +142,69 @@ async function renderClip(url, start, end) {
       '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', output
     ], { maxBuffer: 10 * 1024 * 1024, timeout: 180000 });
 
-    return await readFile(output);
-  } finally {
+    return { workDir, output };
+  } catch (error) {
     await rm(workDir, { recursive: true, force: true }).catch(() => {});
+    throw error;
+  } finally {
+    activeRenders -= 1;
+  }
+}
+
+function streamFile(res, filePath, cleanupDir) {
+  const size = statSync(filePath).size;
+  cors(res);
+  res.writeHead(200, {
+    'Content-Type': 'video/mp4',
+    'Content-Length': size,
+    'Content-Disposition': 'attachment; filename="clipmint-short.mp4"',
+    'Cache-Control': 'no-store'
+  });
+  const stream = createReadStream(filePath);
+  const cleanup = () => rm(cleanupDir, { recursive: true, force: true }).catch(() => {});
+  stream.on('error', cleanup);
+  res.on('close', cleanup);
+  stream.pipe(res);
+}
+
+async function readJsonBody(req) {
+  let raw = '';
+  for await (const chunk of req) {
+    raw += chunk;
+    if (Buffer.byteLength(raw) > MAX_BODY_BYTES) {
+      const error = new Error('Request body is too large.');
+      error.statusCode = 413;
+      throw error;
+    }
+  }
+  try {
+    return JSON.parse(raw || '{}');
+  } catch {
+    const error = new Error('Invalid JSON request.');
+    error.statusCode = 400;
+    throw error;
   }
 }
 
 const server = http.createServer(async (req, res) => {
   cors(res);
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
-  const url = new URL(req.url, `http://${req.headers.host}`);
+  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
 
   try {
     if (url.pathname === '/health') {
-      return json(res, 200, { ok: true, service: 'clipmint-render', ffmpeg: true, ytdlp: true });
+      return json(res, 200, { ok: true, service: 'clipmint-render', ffmpeg: true, ytdlp: true, activeRenders });
     }
 
     if (url.pathname === '/api/analyze' && req.method === 'POST') {
-      let raw = '';
-      for await (const chunk of req) raw += chunk;
-      const body = JSON.parse(raw || '{}');
+      const body = await readJsonBody(req);
       const sourceUrl = String(body.url || '').trim();
       const id = getVideoId(sourceUrl);
       if (!id) return json(res, 400, { error: 'Invalid YouTube URL.' });
 
       const info = await getVideoInfo(sourceUrl);
-      const duration = Math.floor(Number(info.duration || 0));
-      if (!duration) return json(res, 422, { error: 'Could not determine video duration.' });
+      const duration = Math.floor(validateFiniteNumber(info.duration, 0));
+      if (!duration || duration < 10) return json(res, 422, { error: 'Video is too short or its duration could not be determined.' });
 
       const count = Number(body.clipCount) === 3 ? 3 : 4;
       const length = Number(body.clipLength) === 15 ? 15 : 30;
@@ -172,27 +223,23 @@ const server = http.createServer(async (req, res) => {
 
     if (url.pathname === '/api/render' && req.method === 'GET') {
       const sourceUrl = url.searchParams.get('url') || '';
-      const start = Math.max(0, Math.floor(Number(url.searchParams.get('start') || 0)));
-      const end = Math.max(start + 1, Math.floor(Number(url.searchParams.get('end') || start + 15)));
+      const start = Math.max(0, Math.floor(validateFiniteNumber(url.searchParams.get('start'), 0)));
+      const end = Math.floor(validateFiniteNumber(url.searchParams.get('end'), start + 15));
       if (!getVideoId(sourceUrl)) return json(res, 400, { error: 'Invalid YouTube URL.' });
-      if (end - start > 30) return json(res, 400, { error: 'Maximum clip length is 30 seconds.' });
+      if (end <= start || end - start > MAX_RENDER_SECONDS) {
+        return json(res, 400, { error: `Clip length must be between 1 and ${MAX_RENDER_SECONDS} seconds.` });
+      }
 
-      const buffer = await renderClip(sourceUrl, start, end);
-      cors(res);
-      res.writeHead(200, {
-        'Content-Type': 'video/mp4',
-        'Content-Length': buffer.length,
-        'Content-Disposition': `attachment; filename="clipmint-${start}-${end}.mp4"`,
-        'Cache-Control': 'no-store'
-      });
-      return res.end(buffer);
+      const rendered = await renderClip(sourceUrl, start, end);
+      return streamFile(res, rendered.output, rendered.workDir);
     }
 
     return json(res, 404, { error: 'Not found' });
   } catch (error) {
     console.error('ClipMint request failed:', error);
+    const status = Number(error?.statusCode) || 502;
     const message = error instanceof Error ? error.message : 'Server error';
-    return json(res, 502, { error: message.slice(0, 1200) });
+    return json(res, status, { error: message.slice(0, 1200) });
   }
 });
 
