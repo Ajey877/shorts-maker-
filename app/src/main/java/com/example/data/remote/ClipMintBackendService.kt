@@ -96,25 +96,25 @@ class ClipMintBackendService {
         context: Context,
         videoUrl: String,
         clip: ShortClip,
+        hookText: String? = null,
+        captionStyle: String = "HORMOZI_BOLD",
         onProgress: (Float) -> Unit = {},
         onComplete: () -> Unit = {},
         onError: (String) -> Unit = {}
     ): Long? {
         if (baseUrl.contains("REPLACE", ignoreCase = true)) return null
-        val downloadUrl = Uri.parse("$baseUrl/api/render").buildUpon()
+        val downloadUrlBuilder = Uri.parse("$baseUrl/api/render").buildUpon()
             .appendQueryParameter("url", videoUrl)
             .appendQueryParameter("start", clip.startSeconds.toString())
             .appendQueryParameter("end", clip.endSeconds.toString())
             .appendQueryParameter("captions", "1")
-            .build().toString()
+            .appendQueryParameter("captionStyle", captionStyle)
+        if (!hookText.isNullOrBlank()) downloadUrlBuilder.appendQueryParameter("hook", hookText.take(180))
+        val downloadUrl = downloadUrlBuilder.build().toString()
         val jobId = System.currentTimeMillis()
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                val request = Request.Builder()
-                    .url(downloadUrl)
-                    .header("Accept", "video/mp4")
-                    .header("Cache-Control", "no-cache")
-                    .build()
+                val request = Request.Builder().url(downloadUrl).header("Accept", "video/mp4").header("Cache-Control", "no-cache").build()
                 client.newCall(request).execute().use { response ->
                     if (!response.isSuccessful) {
                         val serverMessage = response.body?.string()?.take(220).orEmpty()
@@ -149,10 +149,7 @@ class ClipMintBackendService {
                                 }
                             } ?: throw IllegalStateException("Could not open the Downloads file")
                             values.clear(); values.put(MediaStore.Downloads.IS_PENDING, 0); resolver.update(uri, values, null, null)
-                        } catch (e: Exception) {
-                            resolver.delete(uri, null, null)
-                            throw e
-                        }
+                        } catch (e: Exception) { resolver.delete(uri, null, null); throw e }
                     } else {
                         val dir = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "ClipMint")
                         if (!dir.exists()) dir.mkdirs()
@@ -171,7 +168,6 @@ class ClipMintBackendService {
                         }
                         android.media.MediaScannerConnection.scanFile(context, arrayOf(file.absolutePath), arrayOf("video/mp4"), null)
                     }
-
                     Handler(Looper.getMainLooper()).post {
                         onProgress(1f)
                         Toast.makeText(context, "Short #${clip.clipIndex} saved to Downloads/ClipMint", Toast.LENGTH_LONG).show()
@@ -193,6 +189,8 @@ class ClipMintBackendService {
         context: Context,
         videoUrl: String,
         clips: List<ShortClip>,
+        hookText: String? = null,
+        captionStyle: String = "HORMOZI_BOLD",
         onProgress: (Float) -> Unit = {},
         onComplete: () -> Unit = {},
         onError: (String) -> Unit = {}
@@ -206,9 +204,9 @@ class ClipMintBackendService {
                         context = context,
                         videoUrl = videoUrl,
                         clip = clip,
-                        onProgress = { clipProgress ->
-                            postProgress(onProgress, ((index + clipProgress) / clips.size).coerceIn(0f, 1f))
-                        },
+                        hookText = if (index == 0) hookText else null,
+                        captionStyle = captionStyle,
+                        onProgress = { clipProgress -> postProgress(onProgress, ((index + clipProgress) / clips.size).coerceIn(0f, 1f)) },
                         onComplete = { if (continuation.isActive) continuation.resume(true) },
                         onError = { if (continuation.isActive) continuation.resume(false) }
                     )
@@ -231,9 +229,5 @@ class ClipMintBackendService {
         Handler(Looper.getMainLooper()).post { onProgress(value.coerceIn(0f, 1f)) }
     }
 
-    data class BackendAnalysis(
-        val video: YouTubeVideoInfo,
-        val clips: List<ShortClip>,
-        val transcriptAvailable: Boolean
-    )
+    data class BackendAnalysis(val video: YouTubeVideoInfo, val clips: List<ShortClip>, val transcriptAvailable: Boolean)
 }
