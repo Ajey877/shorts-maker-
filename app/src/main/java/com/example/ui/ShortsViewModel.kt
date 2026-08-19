@@ -74,52 +74,40 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
       return
     }
     viewModelScope.launch {
-      _uiState.update { it.copy(isAnalyzing = true, analysisStatusText = "Checking the YouTube video…") }
+      _uiState.update { it.copy(isAnalyzing = true, analysisStatusText = "Connecting to ClipMint backend…") }
       try {
         val analysis = repository.analyzeVideo(input)
-        if (analysis != null && analysis.clips.isNotEmpty()) {
-          val videoInfo = analysis.video
-          val clips = analysis.clips
-          val first = clips.first()
-          _uiState.update {
-            it.copy(
-              isAnalyzing = false,
-              analysisStatusText = "Found ${clips.size} Shorts from the transcript",
-              currentVideo = videoInfo,
-              clips = clips,
-              selectedClip = first,
-              retentionPoints = repository.getRetentionCurve(clips),
-              customHookHeadline = first.hookHeadline,
-              playbackPositionSec = 0f,
-              isPlaying = true
-            )
-          }
-          startPlaybackLoop()
-          return@launch
-        }
-
-        // Offline/demo fallback. The app remains usable if the backend is sleeping or unavailable.
-        _uiState.update { it.copy(analysisStatusText = "Backend unavailable — preparing offline preview…") }
-        val videoInfo = repository.resolveVideo(input)
-        val generated = repository.generateShortsForVideo(videoInfo)
-        val first = generated.firstOrNull()
+        if (analysis.clips.isEmpty()) throw IllegalStateException("No usable Shorts were returned.")
+        val videoInfo = analysis.video
+        val clips = analysis.clips
+        val first = clips.first()
         _uiState.update {
           it.copy(
             isAnalyzing = false,
-            analysisStatusText = "Offline preview ready",
+            analysisStatusText = "Found ${clips.size} Shorts from the transcript",
             currentVideo = videoInfo,
-            clips = generated,
+            clips = clips,
             selectedClip = first,
-            retentionPoints = repository.getRetentionCurve(generated),
-            customHookHeadline = first?.hookHeadline.orEmpty(),
+            retentionPoints = emptyList(),
+            customHookHeadline = first.hookHeadline,
             playbackPositionSec = 0f,
             isPlaying = true
           )
         }
         startPlaybackLoop()
       } catch (e: Exception) {
-        _uiState.update { it.copy(isAnalyzing = false, analysisStatusText = "Analysis failed: ${e.message ?: "unknown error"}") }
-        showNotification("Could not analyze this video. Check the URL and backend connection.")
+        val message = e.message ?: "unknown error"
+        _uiState.update {
+          it.copy(
+            isAnalyzing = false,
+            currentVideo = null,
+            clips = emptyList(),
+            selectedClip = null,
+            retentionPoints = emptyList(),
+            analysisStatusText = "Could not process this YouTube video."
+          )
+        }
+        showNotification(message)
       }
     }
   }
@@ -209,7 +197,7 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
       📌 ${clip.title}
       ⏱️ ${clip.rangeFormatted}
       🎯 ${clip.hookHeadline}
-      🔥 Score: ${clip.viralityScore}/100
+      📊 AI selection score: ${clip.viralityScore}/100
 
       🏷️ ${clip.suggestedHashtags.joinToString(" ")}
 
