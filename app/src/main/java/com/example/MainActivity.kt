@@ -21,8 +21,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmarks
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.SmartDisplay
 import androidx.compose.material.icons.outlined.Bookmarks
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.SmartDisplay
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
@@ -49,6 +51,7 @@ import com.example.ui.ShortsViewModel
 import com.example.ui.components.ExportUploadDialog
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.LibraryScreen
+import com.example.ui.screens.SettingsScreen
 import com.example.ui.theme.MyApplicationTheme
 
 class MainActivity : ComponentActivity() {
@@ -91,6 +94,12 @@ class MainActivity : ComponentActivity() {
                 onClick = { viewModel.setActiveTab(1) },
                 icon = { Icon(if (uiState.activeTab == 1) Icons.Filled.Bookmarks else Icons.Outlined.Bookmarks, contentDescription = "Library") },
                 label = { Text("Library", fontWeight = if (uiState.activeTab == 1) FontWeight.Bold else FontWeight.Normal) }
+              )
+              NavigationBarItem(
+                selected = uiState.activeTab == 2,
+                onClick = { viewModel.setActiveTab(2) },
+                icon = { Icon(if (uiState.activeTab == 2) Icons.Filled.Settings else Icons.Outlined.Settings, contentDescription = "Settings") },
+                label = { Text("Settings", fontWeight = if (uiState.activeTab == 2) FontWeight.Bold else FontWeight.Normal) }
               )
             }
           }
@@ -145,7 +154,11 @@ class MainActivity : ComponentActivity() {
                       clips = uiState.clips.take(uiState.clipCount),
                       onProgress = { renderProgress = it },
                       onComplete = { isRendering = false; renderingBatch = false; renderProgress = 1f },
-                      onError = { message -> isRendering = false; renderingBatch = false; Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
+                      onError = { message ->
+                        isRendering = false
+                        renderingBatch = false
+                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                      }
                     )
                     if (batchId == null) {
                       isRendering = false
@@ -171,6 +184,7 @@ class MainActivity : ComponentActivity() {
                 onDeleteClip = viewModel::deleteSavedClip,
                 onGoToStudio = { viewModel.setActiveTab(0) }
               )
+              2 -> SettingsScreen()
             }
 
             if (uiState.activeTab == 0 && selectedClip != null && currentVideo != null && !isRendering) {
