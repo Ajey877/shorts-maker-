@@ -19,23 +19,24 @@ class ShortsRepository(
 
   fun isClipSaved(clipId: String): Flow<Boolean> = clipDao.isClipSavedFlow(clipId)
 
-  suspend fun analyzeVideo(input: String): BackendAnalysisResult? {
+  suspend fun analyzeVideo(input: String, clipCount: Int, clipLength: Int): BackendAnalysisResult? {
     val url = input.trim()
     if (url.isBlank()) return null
 
-    backendService.analyze(url, 4, 30)?.let { backend ->
-      if (backend.clips.isNotEmpty()) return BackendAnalysisResult(backend.video, backend.clips)
+    backendService.analyze(url, clipCount, clipLength)?.let { backend ->
+      if (backend.clips.isNotEmpty()) {
+        return BackendAnalysisResult(backend.video, backend.clips, backend.transcriptAvailable)
+      }
     }
 
-    // Samples remain usable without a running backend. Real YouTube URLs do not
-    // fall back to fabricated metadata or fake timestamps.
     val preset = GeminiClipperService.PRESETS.firstOrNull { preset ->
       preset.url == url || url.contains(preset.id, ignoreCase = true)
     } ?: return null
 
     return BackendAnalysisResult(
       video = preset,
-      clips = clipperService.generateShorts(preset)
+      clips = clipperService.generateShorts(preset).take(clipCount.coerceIn(3, 4)),
+      transcriptAvailable = false
     )
   }
 
@@ -60,6 +61,7 @@ class ShortsRepository(
 
   data class BackendAnalysisResult(
     val video: YouTubeVideoInfo,
-    val clips: List<ShortClip>
+    val clips: List<ShortClip>,
+    val transcriptAvailable: Boolean
   )
 }
