@@ -14,7 +14,6 @@ class ShortsRepository(
   private val clipperService: GeminiClipperService = GeminiClipperService(),
   private val backendService: ClipMintBackendService = ClipMintBackendService()
 ) {
-
   val savedClips: Flow<List<ClipEntity>> = clipDao.getAllClips()
   val postedClips: Flow<List<ClipEntity>> = clipDao.getPostedClips()
 
@@ -22,9 +21,14 @@ class ShortsRepository(
 
   fun resolveVideo(input: String): YouTubeVideoInfo = clipperService.resolveVideoInfo(input)
 
+  suspend fun analyzeVideo(input: String): BackendAnalysisResult? {
+    val url = input.trim()
+    if (url.isBlank()) return null
+    val backend = backendService.analyze(url, 4, 30) ?: return null
+    return BackendAnalysisResult(backend.video, backend.clips)
+  }
+
   suspend fun generateShortsForVideo(videoInfo: YouTubeVideoInfo): List<ShortClip> {
-    // Use the real backend when it is configured. It returns non-overlapping timestamps
-    // from different parts of the source video so the four outputs are genuinely different.
     val backend = backendService.analyze(videoInfo.url, 4, 30)
     if (!backend?.clips.isNullOrEmpty()) return backend!!.clips
     return clipperService.generateShorts(videoInfo)
@@ -34,20 +38,23 @@ class ShortsRepository(
     clipperService.generateRetentionCurve(clips)
 
   suspend fun saveClip(clip: ShortClip, videoInfo: YouTubeVideoInfo) {
-    val entity = ClipEntity.fromDomain(
-      clip = clip,
-      videoTitle = videoInfo.title,
-      channelName = videoInfo.channelName,
-      thumbnailUrl = videoInfo.thumbnailUrl
+    clipDao.insertClip(
+      ClipEntity.fromDomain(
+        clip = clip,
+        videoTitle = videoInfo.title,
+        channelName = videoInfo.channelName,
+        thumbnailUrl = videoInfo.thumbnailUrl
+      )
     )
-    clipDao.insertClip(entity)
   }
 
-  suspend fun deleteSavedClip(clipId: String) {
-    clipDao.deleteClipById(clipId)
-  }
+  suspend fun deleteSavedClip(clipId: String) = clipDao.deleteClipById(clipId)
 
-  suspend fun setPostedStatus(clipId: String, isPosted: Boolean) {
+  suspend fun setPostedStatus(clipId: String, isPosted: Boolean) =
     clipDao.updatePostedStatus(clipId, isPosted)
-  }
+
+  data class BackendAnalysisResult(
+    val video: YouTubeVideoInfo,
+    val clips: List<ShortClip>
+  )
 }
