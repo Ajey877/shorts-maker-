@@ -36,6 +36,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.background
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -95,9 +96,7 @@ fun ShortsStudioPlayer(
 
   DisposableEffect(exoPlayer) {
     val listener = object : Player.Listener {
-      override fun onIsPlayingChanged(isPlayingNow: Boolean) {
-        onPlayingChanged(isPlayingNow)
-      }
+      override fun onIsPlayingChanged(isPlayingNow: Boolean) { onPlayingChanged(isPlayingNow) }
     }
     exoPlayer?.addListener(listener)
     onDispose {
@@ -143,11 +142,7 @@ fun ShortsStudioPlayer(
       ) {
         Column(Modifier.weight(1f)) {
           Text("Real video preview", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-          Text(
-            "${clip.startTimestampFormatted} – ${clip.endTimestampFormatted} • ${clip.durationSeconds}s",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-          )
+          Text("${clip.startTimestampFormatted} – ${clip.endTimestampFormatted} • ${clip.durationSeconds}s", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         IconButton(onClick = { showTrimControls = !showTrimControls }) {
           Icon(Icons.Default.Tune, contentDescription = "Edit trim")
@@ -169,13 +164,13 @@ fun ShortsStudioPlayer(
               PlayerView(viewContext).apply {
                 useController = false
                 setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING)
-                resizeMode = resizeModeFor(framingMode)
-                this.player = exoPlayer
+                resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
+                player = exoPlayer
               }
             },
             update = { playerView ->
               playerView.player = exoPlayer
-              playerView.resizeMode = resizeModeFor(framingMode)
+              playerView.resizeMode = AspectRatioFrameLayout.RESIZE_MODE_ZOOM
             },
             modifier = Modifier.fillMaxSize()
           )
@@ -193,12 +188,7 @@ fun ShortsStudioPlayer(
             color = MaterialTheme.colorScheme.inverseSurface,
             contentColor = MaterialTheme.colorScheme.inverseOnSurface
           ) {
-            Text(
-              "Live preview needs the ClipMint backend.",
-              style = MaterialTheme.typography.labelLarge,
-              textAlign = TextAlign.Center,
-              modifier = Modifier.padding(14.dp)
-            )
+            Text("Live preview needs the ClipMint backend.", style = MaterialTheme.typography.labelLarge, textAlign = TextAlign.Center, modifier = Modifier.padding(14.dp))
           }
         }
 
@@ -208,12 +198,7 @@ fun ShortsStudioPlayer(
           color = MaterialTheme.colorScheme.inverseSurface,
           contentColor = MaterialTheme.colorScheme.inverseOnSurface
         ) {
-          Text(
-            customHookHeadline.ifBlank { clip.hookHeadline },
-            fontWeight = FontWeight.Bold,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-          )
+          Text(customHookHeadline.ifBlank { clip.hookHeadline }, fontWeight = FontWeight.Bold, textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp))
         }
 
         currentSubtitle?.let { subtitle ->
@@ -268,20 +253,11 @@ fun ShortsStudioPlayer(
           valueRange = 0f..duration.toFloat(),
           modifier = Modifier.weight(1f)
         )
-        Text(
-          String.format("%02.0fs / %02ds", playbackPositionSec, duration),
-          style = MaterialTheme.typography.labelMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          modifier = Modifier.padding(start = 6.dp)
-        )
+        Text(String.format("%02.0fs / %02ds", playbackPositionSec, duration), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 6.dp))
       }
 
       AnimatedVisibility(showTrimControls) {
-        Surface(
-          modifier = Modifier.fillMaxWidth(),
-          shape = MaterialTheme.shapes.large,
-          color = MaterialTheme.colorScheme.surfaceContainerHighest
-        ) {
+        Surface(modifier = Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainerHighest) {
           Column(Modifier.padding(12.dp)) {
             Text("Fine-tune trim", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(8.dp))
@@ -310,27 +286,13 @@ fun ShortsStudioPlayer(
       Text("Caption style", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
       Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         CaptionStyle.entries.forEach { style ->
-          FilterChip(
-            selected = captionStyle == style,
-            onClick = { onCaptionStyleChanged(style) },
-            label = { Text(style.displayName, fontSize = 11.sp) },
-            modifier = Modifier.weight(1f)
-          )
+          FilterChip(selected = captionStyle == style, onClick = { onCaptionStyleChanged(style) }, label = { Text(style.displayName, fontSize = 11.sp) }, modifier = Modifier.weight(1f))
         }
       }
 
       Spacer(Modifier.height(8.dp))
       Text("Framing", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-      Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        FramingMode.entries.forEach { mode ->
-          FilterChip(
-            selected = framingMode == mode,
-            onClick = { onFramingModeChanged(mode) },
-            label = { Text(mode.displayName, fontSize = 11.sp) },
-            modifier = Modifier.weight(1f)
-          )
-        }
-      }
+      FilterChip(selected = framingMode == FramingMode.CENTER_CROP, onClick = { onFramingModeChanged(FramingMode.CENTER_CROP) }, label = { Text(FramingMode.CENTER_CROP.displayName) })
 
       Spacer(Modifier.height(8.dp))
       OutlinedTextField(
@@ -343,10 +305,4 @@ fun ShortsStudioPlayer(
       )
     }
   }
-}
-
-private fun resizeModeFor(mode: FramingMode): Int = when (mode) {
-  FramingMode.BLUR_BACKGROUND -> AspectRatioFrameLayout.RESIZE_MODE_FIT
-  FramingMode.SPLIT_SCREEN -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
-  FramingMode.CENTER_CROP -> AspectRatioFrameLayout.RESIZE_MODE_ZOOM
 }
