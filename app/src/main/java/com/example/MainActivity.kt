@@ -72,9 +72,7 @@ class MainActivity : ComponentActivity() {
 
         val selectedClip = uiState.selectedClip
         val currentVideo = uiState.currentVideo
-        val previewUrl = if (selectedClip != null && currentVideo != null) {
-          backendService.previewUrl(currentVideo.url, selectedClip)
-        } else null
+        val previewUrl = if (selectedClip != null && currentVideo != null) backendService.previewUrl(currentVideo.url, selectedClip) else null
 
         Scaffold(
           modifier = Modifier.fillMaxSize(),
@@ -138,10 +136,7 @@ class MainActivity : ComponentActivity() {
                 onTrimUpdated = viewModel::updateClipTrim,
                 onSaveClip = viewModel::saveCurrentClip,
                 onCopyMetadata = { clip -> viewModel.copyShortsMetadata(context, clip) },
-                onUploadShorts = { clip ->
-                  viewModel.selectClip(clip)
-                  viewModel.setUploadDialogVisible(true)
-                },
+                onUploadShorts = { clip -> viewModel.selectClip(clip); viewModel.setUploadDialogVisible(true) },
                 onShareClip = { clip -> viewModel.shareShortsClip(context, clip) },
                 onExportAll = {
                   if (currentVideo != null && uiState.clips.isNotEmpty() && !isRendering) {
@@ -152,13 +147,11 @@ class MainActivity : ComponentActivity() {
                       context = context,
                       videoUrl = currentVideo.url,
                       clips = uiState.clips.take(uiState.clipCount),
+                      hookText = uiState.customHookHeadline,
+                      captionStyle = uiState.captionStyle.name,
                       onProgress = { renderProgress = it },
                       onComplete = { isRendering = false; renderingBatch = false; renderProgress = 1f },
-                      onError = { message ->
-                        isRendering = false
-                        renderingBatch = false
-                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
-                      }
+                      onError = { message -> isRendering = false; renderingBatch = false; Toast.makeText(context, message, Toast.LENGTH_LONG).show() }
                     )
                     if (batchId == null) {
                       isRendering = false
@@ -171,15 +164,9 @@ class MainActivity : ComponentActivity() {
               )
               1 -> LibraryScreen(
                 savedClips = savedClips,
-                onSelectAndPreviewClip = { clip ->
-                  viewModel.selectClip(clip)
-                  viewModel.setActiveTab(0)
-                },
+                onSelectAndPreviewClip = { clip -> viewModel.selectClip(clip); viewModel.setActiveTab(0) },
                 onCopyMetadata = { clip -> viewModel.copyShortsMetadata(context, clip) },
-                onOpenYouTubeShorts = { clip ->
-                  viewModel.selectClip(clip)
-                  viewModel.setUploadDialogVisible(true)
-                },
+                onOpenYouTubeShorts = { clip -> viewModel.selectClip(clip); viewModel.setUploadDialogVisible(true) },
                 onTogglePostedStatus = viewModel::togglePostedStatus,
                 onDeleteClip = viewModel::deleteSavedClip,
                 onGoToStudio = { viewModel.setActiveTab(0) }
@@ -197,6 +184,8 @@ class MainActivity : ComponentActivity() {
                     context = context,
                     videoUrl = currentVideo.url,
                     clip = selectedClip,
+                    hookText = uiState.customHookHeadline,
+                    captionStyle = uiState.captionStyle.name,
                     onProgress = { renderProgress = it },
                     onComplete = { isRendering = false; renderProgress = 1f },
                     onError = { isRendering = false }
@@ -224,12 +213,7 @@ class MainActivity : ComponentActivity() {
                 Column(Modifier.padding(14.dp)) {
                   Row(verticalAlignment = Alignment.CenterVertically) {
                     Icon(Icons.Default.Download, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(18.dp))
-                    Text(
-                      if (renderingBatch) "Exporting all Shorts…" else "Rendering Short…",
-                      style = MaterialTheme.typography.titleSmall,
-                      fontWeight = FontWeight.SemiBold,
-                      modifier = Modifier.padding(start = 8.dp)
-                    )
+                    Text(if (renderingBatch) "Exporting all Shorts…" else "Rendering Short…", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(start = 8.dp))
                     Text(" ${(renderProgress * 100).toInt()}%", style = MaterialTheme.typography.labelMedium, modifier = Modifier.padding(start = 8.dp))
                   }
                   LinearProgressIndicator(progress = renderProgress, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
