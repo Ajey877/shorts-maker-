@@ -10,11 +10,12 @@ ClipMint turns a YouTube video into ready-to-share vertical Shorts from Android.
 4. Rank transcript windows using hook language, questions, speech density, sentence completeness, low filler, and overlap avoidance.
 5. Return 3 or 4 distinct 15/30-second Short candidates.
 6. Open a real low-resolution Media3 preview stream for the selected segment when the backend is reachable.
-7. Trim, seek, play/pause, change caption style, framing mode, and hook text in the Android editor.
-8. Export one selected Short or batch-export all suggested Shorts sequentially.
-9. Render each selected segment as a 1080×1920 MP4.
-10. Burn transcript captions into the exported Short when captions are available.
-11. Stream the MP4 to Android with visible download progress and save it under `Downloads/ClipMint`.
+7. Trim, seek, play/pause, change caption style, 9:16 crop mode, and hook text in the Android editor.
+8. Export one selected Short or batch-export all suggested Shorts.
+9. Run exports through Android WorkManager with network constraints, retry support, and progress reporting.
+10. Render each selected segment as a 1080×1920 MP4.
+11. Burn transcript captions into the exported Short when captions are available.
+12. Stream the MP4 to Android and save it under `Downloads/ClipMint`.
 
 The semantic ranking is deliberately free and self-hostable: it does not require a paid AI API. An optional LLM provider can be added later for deeper semantic ranking without changing the rendering pipeline.
 
@@ -32,25 +33,27 @@ The semantic ranking is deliberately free and self-hostable: it does not require
 - 15 or 30-second selection
 - Automatic subtitle timing in candidate metadata
 - Real low-resolution Media3 preview stream
+- Preview cache with TTL and HTTP Range support for smoother playback
 - True playback seek/play/pause in the editor
 - Trim controls
 - Caption style controls
-- Framing controls
+- Truthful 9:16 crop mode
 - Editable hook headline
 - One-tap batch export
+- Background exports through WorkManager
+- Retry/backoff for transient server failures
 - 9:16 vertical rendering
 - Burned-in captions during server rendering
 - 720p-or-lower source selection for final rendering and 360p preview streaming
 - FFmpeg H.264/AAC output with fast-start MP4
-- HTTP Range support for preview playback
 - Streaming MP4 responses instead of loading rendered files into Node memory
 - Render concurrency limits and HTTP 429 handling
 - Request validation and bounded request size
 - Lightweight per-client API rate limiting
 - Temporary-file cleanup
 - Android Downloads/ClipMint output
-- Visible client-side download progress
-- Built-in sample presets for offline UI/demo testing
+- Visible client-side export progress
+- Built-in sample presets for UI/demo testing
 - Honest backend errors for real URLs instead of fabricated metadata/timestamps
 - GitHub Actions backend syntax check, Android unit-test execution, and debug APK build
 - Docker-ready backend
@@ -68,7 +71,7 @@ ClipMint Backend
    │      ├── yt-dlp subtitles
    │      └── transcript ranking
    ├── /api/preview
-   │      ├── yt-dlp short section
+   │      ├── cached short render
    │      ├── FFmpeg 360×640 encode
    │      └── HTTP Range streaming
    └── /api/render
@@ -76,6 +79,13 @@ ClipMint Backend
           ├── FFmpeg 1080×1920 crop
           ├── optional SRT captions
           └── streamed MP4
+
+Android export
+   │
+   └── WorkManager
+        ├── network constraint
+        ├── retry/backoff
+        └── progress → Downloads/ClipMint
 ```
 
 ## Backend
@@ -98,8 +108,10 @@ http://localhost:10000/health
 - `PORT` — HTTP port, default `10000`
 - `FFMPEG_PATH` — FFmpeg executable path
 - `YTDLP_PATH` — yt-dlp executable path
-- `MAX_RENDER_CONCURRENCY` — simultaneous renders, default `1`
+- `MAX_RENDER_CONCURRENCY` — simultaneous final renders, default `1`
 - `RATE_LIMIT_PER_MINUTE` — backend requests per client per minute, default `12`
+- `PREVIEW_CACHE_TTL_MS` — preview cache lifetime, default `120000`
+- `MAX_PREVIEW_CACHE` — maximum cached previews, default `8`
 - `CORS_ORIGIN` — allowed origin, default `*`
 
 The default concurrency of one render is intentional for free/small hosting.
@@ -129,8 +141,8 @@ The workflow:
 
 - The transcript scorer is a local heuristic engine, not a claim of measured YouTube retention or guaranteed virality.
 - English subtitles are preferred. Videos without usable subtitles may have fewer or no semantic candidates.
-- Face/speaker tracking is not yet implemented; the current 9:16 framing is crop-based.
-- The render endpoint remains synchronous; a persistent background worker queue with server-side stage progress is the next scale-oriented architecture upgrade.
+- Face/speaker tracking is not yet implemented; the current export framing is a truthful 9:16 center crop.
+- The render endpoint remains synchronous on the backend, while Android export execution is resilient through WorkManager.
 - The current rate limiting is intentionally lightweight in-memory protection, not a substitute for production authentication or a distributed gateway.
 - Free hosting remains CPU/RAM/bandwidth constrained and may sleep or throttle.
 - YouTube, copyright, and creator-rights rules still apply. Only process content you are allowed to download and transform.
@@ -154,8 +166,10 @@ The workflow:
 - [x] Render/download progress
 - [x] Batch rendering
 - [x] Lightweight rate limiting
+- [x] Preview caching
+- [x] Android WorkManager export
 - [ ] Face/speaker-aware framing
-- [ ] Persistent background worker queue with stage progress
+- [ ] Persistent server-side worker queue with stage progress
 - [ ] Optional LLM semantic ranking
 - [ ] Production authentication/distributed rate limiting
 
