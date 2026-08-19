@@ -1,24 +1,45 @@
 # 🎬 ClipMint — AI YouTube Shorts Maker
 
-> Turn long-form YouTube videos into ready-to-share vertical Shorts from your Android phone.
+ClipMint turns a YouTube video into ready-to-share vertical Shorts from Android. The app uses a lightweight backend for the expensive video work so the phone does not have to download and process the full source video itself.
 
-ClipMint is a mobile-first YouTube Shorts creation project built around an Android app and a lightweight server-side video-processing backend. Paste a YouTube URL, choose how many Shorts you want, select a duration, analyze the video, and render individual 9:16 MP4 clips.
+## What ClipMint does
 
-## ✨ Current features
+1. Paste a supported YouTube URL.
+2. Fetch the real video metadata and duration.
+3. Try to obtain English subtitles/auto-captions with yt-dlp.
+4. Rank transcript windows using hook language, questions, speech density, sentence completeness, and overlap avoidance.
+5. Return 3 or 4 distinct 15/30-second Short candidates.
+6. Render the selected segment as 1080×1920 MP4.
+7. Burn transcript captions into the exported Short when captions are available.
+8. Stream the MP4 to Android and save it under `Downloads/ClipMint`.
 
-- Android app with a Shorts-focused Jetpack Compose interface
-- YouTube URL analysis
-- 3 or 4 distinct clip ranges
-- 15-second or 30-second clips
-- Server-side extraction with yt-dlp
-- FFmpeg rendering to vertical 9:16 MP4
+The semantic ranking is deliberately free and self-hostable: it does not require a paid AI API. A future optional LLM provider can be added for deeper semantic ranking without changing the rendering pipeline.
+
+## Current feature set
+
+- Jetpack Compose Android UI
+- YouTube URL validation
+- Real backend video metadata
+- Transcript/auto-caption extraction when YouTube provides it
+- Transcript-based candidate ranking
+- Hook/question/density/completeness scoring
+- 3 or 4 candidate Shorts
+- 15 or 30-second selection
+- Automatic subtitle timing in the candidate metadata
+- 9:16 vertical rendering
+- Burned-in captions during server rendering
+- 720p-or-lower source selection to reduce free-host resource use
+- FFmpeg H.264/AAC output with fast-start MP4
+- Streaming MP4 responses instead of loading rendered files into Node memory
+- Render concurrency limits and HTTP 429 handling
+- Request validation and bounded request size
+- Temporary-file cleanup
 - Android Downloads/ClipMint output
+- Offline/demo fallback when the backend is sleeping or unavailable
+- GitHub Actions backend syntax check and debug APK build
 - Docker-ready backend
-- GitHub Actions debug APK build
-- Backend request validation and bounded rendering concurrency
-- Streaming MP4 responses instead of loading the complete rendered video into Node memory
 
-## 🏗️ Architecture
+## Architecture
 
 ```text
 Android APK
@@ -27,17 +48,17 @@ Android APK
 ClipMint Backend
    ├── /health
    ├── /api/analyze
+   │      ├── yt-dlp metadata
+   │      ├── yt-dlp subtitles
+   │      └── transcript ranking
    └── /api/render
-        │
-        ├── yt-dlp
-        └── FFmpeg
+          ├── yt-dlp section download
+          ├── FFmpeg 9:16 crop
+          ├── optional SRT captions
+          └── streamed MP4
 ```
 
-The Android app handles the UI and downloads. The backend performs the CPU-heavy extraction and rendering.
-
-## 🚀 Run locally
-
-### Backend
+## Backend
 
 Requirements: Node.js 22, Docker or local FFmpeg + yt-dlp.
 
@@ -52,76 +73,64 @@ Health check:
 http://localhost:10000/health
 ```
 
-### Android
+### Environment variables
 
-The app reads `BACKEND_BASE_URL` from `app/build.gradle.kts`. Set it to your HTTPS backend URL before building a release APK.
+- `PORT` — HTTP port, default `10000`
+- `FFMPEG_PATH` — FFmpeg executable path
+- `YTDLP_PATH` — yt-dlp executable path
+- `MAX_RENDER_CONCURRENCY` — simultaneous renders, default `1`
+- `CORS_ORIGIN` — allowed origin, default `*`
 
-## 📱 Build the APK
+The default concurrency of one render is intentional for free/small hosting.
 
-The `clipmint-free-apk` branch contains a GitHub Actions workflow. It now performs a backend JavaScript syntax check before the Android build.
+## Android
 
-Open GitHub → Actions → Build APK → run the workflow. The debug APK is uploaded as the `shorts-maker-debug-apk` artifact.
+`app/build.gradle.kts` contains the backend URL in `BuildConfig.BACKEND_BASE_URL`. Use an HTTPS deployment URL for a release APK.
 
-## 🔧 Backend improvements
+The app first attempts real backend analysis. If the backend is unavailable, it falls back to the existing offline/demo engine so the UI remains usable instead of crashing or becoming stuck.
 
-The renderer has been hardened for free/small hosting environments:
+## Build the APK
 
-- Rejects malformed JSON and oversized analyze requests.
-- Accepts only supported YouTube URL forms.
-- Rejects invalid/NaN/negative render parameters.
-- Enforces a maximum 30-second render.
-- Limits concurrent renders to avoid exhausting a small server.
-- Uses a lower download resolution before producing the 1080×1920 output, reducing bandwidth and temporary disk pressure.
-- Streams the finished MP4 to the client instead of reading the whole file into RAM.
-- Cleans temporary render directories after successful or failed requests.
-- Returns useful HTTP error codes for busy/invalid requests.
+The `clipmint-free-apk` branch contains `.github/workflows/build-apk.yml`.
 
-Set `MAX_RENDER_CONCURRENCY` if your server has more CPU/RAM. For a free instance, the default of 1 is intentional.
+The workflow:
 
-## ⚠️ Important limitations
+1. Checks `backend/server.js` with Node syntax validation.
+2. Sets up Java 17 and Gradle.
+3. Generates a debug keystore.
+4. Builds `assembleDebug`.
+5. Uploads the APK as the `shorts-maker-debug-apk` artifact.
 
-Clip selection is currently **range-based, not true AI semantic selection**. The backend does not yet analyze transcripts to identify the strongest hooks. The current scores and hook labels are metadata generated from the selected ranges, not measured viral performance.
+## Important limitations
 
-The next meaningful upgrades are:
+- Transcript ranking is a local heuristic engine, not a claim of measured YouTube retention or guaranteed virality.
+- English subtitles are preferred. Videos without usable subtitles fall back to deterministic timestamp selection.
+- Face/speaker tracking is not yet implemented; the current 9:16 crop is center-based.
+- Rendering remains CPU-intensive and free hosting can sleep or throttle.
+- There is no production authentication/rate limiting yet. Do not expose a public backend without adding those controls.
+- YouTube, copyright, and creator-rights rules still apply. Only process content you are allowed to download and transform.
 
-1. Transcript extraction and speech-to-text.
-2. Semantic hook detection and moment ranking.
-3. Automatic captions with word-level timing.
-4. Face/speaker-aware 9:16 framing.
-5. Background job queue and real progress reporting.
-6. Render history and retry support.
-7. Production authentication/rate limiting if the backend becomes public.
-
-Free hosting can sleep and has limited CPU, RAM, bandwidth, and temporary disk. Rendering video is resource-intensive.
-
-## 🔐 Responsible use
-
-Only download, transform, and redistribute videos when you have the necessary rights or permission to do so. Respect copyright, platform terms, and creator rights. ClipMint does not grant rights to third-party content.
-
-## 🗺️ Roadmap
+## Roadmap
 
 - [x] Android application
 - [x] YouTube URL input
 - [x] 3/4 clip selection
 - [x] 15/30-second selection
-- [x] Different clip timestamps
 - [x] yt-dlp backend
 - [x] FFmpeg rendering
-- [x] 9:16 vertical output
+- [x] 9:16 output
 - [x] Android MP4 download
-- [x] Docker backend
-- [x] GitHub Actions APK build
-- [x] Backend validation and memory improvements
-- [ ] Transcript-based clip selection
-- [ ] True AI viral-moment ranking
-- [ ] Automatic captions/subtitles
-- [ ] Caption styling
-- [ ] Multiple aspect ratios
+- [x] Backend validation and streaming
+- [x] Transcript extraction
+- [x] Transcript-based clip ranking
+- [x] Automatic caption rendering
+- [x] Offline fallback
+- [ ] Face/speaker-aware framing
+- [ ] Background job queue with progress events
 - [ ] Batch rendering
-- [ ] Render progress reporting
-- [ ] User accounts/history
-- [ ] Production-grade job queue
+- [ ] Optional LLM semantic ranking
+- [ ] Production authentication/rate limiting
 
-## 📄 License
+## Responsible use
 
-Add your preferred open-source or proprietary license before distributing the project publicly.
+ClipMint is a transformation tool. It does not grant rights to third-party videos. Respect copyright, platform terms, and creator permissions.
