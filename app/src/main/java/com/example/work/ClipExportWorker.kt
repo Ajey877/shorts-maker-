@@ -9,6 +9,7 @@ import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
 import com.example.BuildConfig
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -53,6 +54,7 @@ class ClipExportWorker(
     if (clips.isEmpty()) return@withContext Result.failure()
 
     clips.forEachIndexed { index, clip ->
+      ensureActive()
       val requestUrl = buildRenderUrl(videoUrl, clip, captionStyle)
       val request = Request.Builder()
         .url(requestUrl)
@@ -190,10 +192,8 @@ private class UriBuilder(private val base: String) {
     return this
   }
 
-  fun build(): String {
-    return base + params.joinToString(prefix = "?", separator = "&") { (key, value) ->
-      "${encode(key)}=${encode(value)}"
-    }
+  fun build(): String = base + params.joinToString(prefix = "?", separator = "&") { (key, value) ->
+    "${encode(key)}=${encode(value)}"
   }
 
   private fun encode(value: String): String = java.net.URLEncoder.encode(value, Charsets.UTF_8.name())
