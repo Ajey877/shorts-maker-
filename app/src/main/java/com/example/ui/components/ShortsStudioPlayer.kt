@@ -46,6 +46,7 @@ import com.example.model.CaptionStyle
 import com.example.model.FramingMode
 import com.example.model.ShortClip
 import com.example.model.YouTubeVideoInfo
+import kotlinx.coroutines.delay
 
 @Composable
 fun ShortsStudioPlayer(
@@ -70,45 +71,42 @@ fun ShortsStudioPlayer(
 
   val player = remember(sourceUri, clip.startSeconds, clip.endSeconds) {
     if (sourceUri == null) null else ExoPlayer.Builder(context).build().apply {
-      val mediaItem = MediaItem.Builder()
-        .setUri(Uri.parse(sourceUri))
-        .setClippingConfiguration(
-          MediaItem.ClippingConfiguration.Builder()
-            .setStartPositionMs(clip.startSeconds.coerceAtLeast(0) * 1000L)
-            .setEndPositionMs(clip.endSeconds.coerceAtLeast(clip.startSeconds + 1) * 1000L)
-            .build()
-        )
-        .build()
-      setMediaItem(mediaItem)
+      val end = maxOf(clip.endSeconds, clip.startSeconds + 1)
+      setMediaItem(
+        MediaItem.Builder()
+          .setUri(Uri.parse(sourceUri))
+          .setClippingConfiguration(
+            MediaItem.ClippingConfiguration.Builder()
+              .setStartPositionMs(clip.startSeconds.coerceAtLeast(0) * 1000L)
+              .setEndPositionMs(end * 1000L)
+              .build()
+          )
+          .build()
       prepare()
+      repeatMode = Player.REPEAT_MODE_ONE
       playWhenReady = isPlaying
     }
   }
 
   DisposableEffect(player) {
-    val listener = object : Player.Listener {
-      override fun onIsPlayingChanged(isPlayingNow: Boolean) {
-        if (!isPlayingNow && player?.playbackState == Player.STATE_ENDED) {
-          player?.seekTo(0)
-        }
-      }
-    }
-    player?.addListener(listener)
-    onDispose {
-      player?.removeListener(listener)
-      player?.release()
-    }
+    onDispose { player?.release() }
   }
 
   LaunchedEffect(isPlaying, player) {
-    player?.let {
-      if (isPlaying) it.play() else it.pause()
-    }
+    player?.let { if (isPlaying) it.play() else it.pause() }
   }
 
   LaunchedEffect(playbackPositionSec, player) {
     if (player != null && kotlin.math.abs(player.currentPosition - playbackPositionSec * 1000L) > 800L) {
       player.seekTo((playbackPositionSec * 1000L).toLong().coerceAtLeast(0L))
+    }
+  }
+
+  LaunchedEffect(player) {
+    while (player != null) {
+      playerPosition = (player.currentPosition / 1000f).coerceAtLeast(0f)
+      onSeek(playerPosition.coerceAtMost(clip.durationSeconds.toFloat()))
+      delay(250)
     }
   }
 
@@ -138,7 +136,6 @@ fun ShortsStudioPlayer(
         }
 
         Spacer(Modifier.height(12.dp))
-
         Box(
           modifier = Modifier
             .fillMaxWidth(0.85f)
@@ -158,10 +155,10 @@ fun ShortsStudioPlayer(
               modifier = Modifier.fillMaxSize()
             )
           } else {
-            Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
+            Surface(Modifier.fillMaxSize(), color = Color.Black) {
               Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Text(
-                  "Import a local video to enable real playback.\nYouTube page URLs are not video streams.",
+                  "Import a local video to enable real playback.\nA YouTube page URL is not a playable media stream.",
                   color = Color.White,
                   textAlign = TextAlign.Center,
                   modifier = Modifier.padding(24.dp)
@@ -174,9 +171,7 @@ fun ShortsStudioPlayer(
             ?: clip.sampleSubtitles.firstOrNull()
           if (currentSubtitle != null) {
             Surface(
-              modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .padding(16.dp),
+              modifier = Modifier.align(Alignment.BottomCenter).padding(16.dp),
               color = Color.Black.copy(alpha = 0.75f),
               shape = RoundedCornerShape(8.dp)
             ) {
