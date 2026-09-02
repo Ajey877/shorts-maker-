@@ -27,6 +27,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 
 
 data class ShortsUiState(
@@ -51,7 +52,7 @@ data class ShortsUiState(
 
 class ShortsViewModel(application: Application) : AndroidViewModel(application) {
   private val repository: ShortsRepository
-  private val exportService = ClipExportService()
+  private val exportService = ClipExportService(application)
   private val _uiState = MutableStateFlow(ShortsUiState())
   val uiState: StateFlow<ShortsUiState> = _uiState.asStateFlow()
   val savedClips: StateFlow<List<ClipEntity>>
@@ -63,11 +64,7 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
   }
 
   fun onUrlInputChanged(newUrl: String) = _uiState.update { it.copy(urlInput = newUrl) }
-
-  fun loadPreset(url: String) {
-    _uiState.update { it.copy(urlInput = url) }
-    analyzeVideo(url)
-  }
+  fun loadPreset(url: String) { _uiState.update { it.copy(urlInput = url) }; analyzeVideo(url) }
 
   fun loadLocalVideo(uri: Uri) {
     viewModelScope.launch {
@@ -77,15 +74,10 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
         val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
         val durationSec = (durationMs / 1000L).toInt().coerceAtLeast(1)
         val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.takeIf { it.isNotBlank() } ?: "Imported video"
-        val video = YouTubeVideoInfo(
-          id = "local_${uri.hashCode().toUInt().toString(16)}", url = uri.toString(), title = title,
-          channelName = "Local file", durationSeconds = durationSec, viewCountFormatted = "Local media",
-          thumbnailUrl = "", description = "Imported local media", isLocalMedia = true
-        )
+        val video = YouTubeVideoInfo(id = "local_${uri.hashCode().toUInt().toString(16)}", url = uri.toString(), title = title, channelName = "Local file", durationSeconds = durationSec, viewCountFormatted = "Local media", thumbnailUrl = "", description = "Imported local media", isLocalMedia = true)
         _uiState.update { it.copy(urlInput = uri.toString(), currentVideo = video, clips = emptyList(), selectedClip = null, retentionPoints = emptyList(), playbackPositionSec = 0f, isPlaying = false, exportedClipUri = null, analysisStatusText = "Video imported. Analyze it to create candidate clips.") }
-      } catch (e: Exception) {
-        showNotification("Could not read this video file.")
-      } finally { retriever.release() }
+      } catch (e: Exception) { showNotification("Could not read this video file.") }
+      finally { retriever.release() }
     }
   }
 
@@ -99,9 +91,7 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
         val generatedClips = repository.generateShortsForVideo(videoInfo)
         val firstClip = generatedClips.firstOrNull()
         _uiState.update { it.copy(isAnalyzing = false, clips = generatedClips, selectedClip = firstClip, retentionPoints = repository.getRetentionCurve(generatedClips), customHookHeadline = firstClip?.hookHeadline ?: "", playbackPositionSec = 0f, isPlaying = false, exportedClipUri = null, analysisStatusText = if (videoInfo.isLocalMedia) "Candidate segments ready. These are timeline candidates, not measured audience retention." else "Metadata-only mode. Import a local source to preview and export real video.") }
-      } catch (e: Exception) {
-        _uiState.update { it.copy(isAnalyzing = false, analysisStatusText = "Analysis failed: ${e.message ?: "unknown error"}") }
-      }
+      } catch (e: Exception) { _uiState.update { it.copy(isAnalyzing = false, analysisStatusText = "Analysis failed: ${e.message ?: "unknown error"}") } }
     }
   }
 
@@ -110,11 +100,7 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
   fun setFramingMode(mode: FramingMode) = _uiState.update { it.copy(framingMode = mode) }
   fun onCustomHookChanged(hook: String) = _uiState.update { it.copy(customHookHeadline = hook) }
   fun togglePlayPause() = _uiState.update { it.copy(isPlaying = !it.isPlaying) }
-
-  fun seekTo(relativeSec: Float) {
-    val clip = _uiState.value.selectedClip ?: return
-    _uiState.update { it.copy(playbackPositionSec = relativeSec.coerceIn(0f, clip.durationSeconds.toFloat())) }
-  }
+  fun seekTo(relativeSec: Float) { val clip = _uiState.value.selectedClip ?: return; _uiState.update { it.copy(playbackPositionSec = relativeSec.coerceIn(0f, clip.durationSeconds.toFloat())) } }
 
   fun updateClipTrim(newStart: Int, newEnd: Int) {
     val current = _uiState.value.selectedClip ?: return
@@ -133,29 +119,24 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
     val clip = _uiState.value.selectedClip ?: return
     if (!video.isLocalMedia) { showNotification("Import a local video before exporting."); return }
     if (_uiState.value.isExporting) return
-    viewModelScope.launch {
-      _uiState.update { it.copy(isExporting = true, exportedClipUri = null, bannerNotification = "Exporting MP4…") }
-      try {
-        val uri = exportService.export(getApplication(), Uri.parse(video.url), clip)
-        _uiState.update { it.copy(isExporting = false, exportedClipUri = uri, bannerNotification = "MP4 exported successfully.") }
-      } catch (e: Exception) {
-        _uiState.update { it.copy(isExporting = false, exportedClipUri = null, bannerNotification = "Export failed: ${e.message ?: "unknown error"}") }
+    _uiState.update { it.copy(isExporting = true, exportedClipUri = null, bannerNotification = "Exporting MP4…") }
+    exportService.export(Uri.parse(video.url), clip,
+      onCompleted = { file ->
+        _uiState.update { it.copy(isExporting = false, exportedClipUri = Uri.fromFile(file), bannerNotification = "MP4 exported successfully.") }
+      },
+      onError = { error ->
+        _uiState.update { it.copy(isExporting = false, exportedClipUri = null, bannerNotification = "Export failed: ${error.message ?: "unknown error"}") }
       }
-    }
+    )
   }
 
   fun shareExportedClip(context: Context) {
     val uri = _uiState.value.exportedClipUri ?: run { showNotification("Export the clip first."); return }
-    runCatching {
-      context.startActivity(Intent.createChooser(Intent().apply { action = Intent.ACTION_SEND; putExtra(Intent.EXTRA_STREAM, uri); type = "video/mp4"; addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }, "Share ClipMint MP4"))
-    }.onFailure { showNotification("Could not open the share sheet.") }
+    runCatching { context.startActivity(Intent.createChooser(Intent().apply { action = Intent.ACTION_SEND; putExtra(Intent.EXTRA_STREAM, uri); type = "video/mp4"; addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }, "Share ClipMint MP4")) }
+      .onFailure { showNotification("Could not open the share sheet.") }
   }
 
-  fun saveCurrentClip() {
-    val clip = _uiState.value.selectedClip ?: return
-    val video = _uiState.value.currentVideo ?: return
-    viewModelScope.launch { repository.saveClip(clip, video); showNotification("Saved to ClipMint Library.") }
-  }
+  fun saveCurrentClip() { val clip = _uiState.value.selectedClip ?: return; val video = _uiState.value.currentVideo ?: return; viewModelScope.launch { repository.saveClip(clip, video); showNotification("Saved to ClipMint Library.") } }
   fun deleteSavedClip(clipId: String) = viewModelScope.launch { repository.deleteSavedClip(clipId); showNotification("Clip removed from library.") }
   fun togglePostedStatus(clipId: String, isPosted: Boolean) = viewModelScope.launch { repository.setPostedStatus(clipId, isPosted); showNotification(if (isPosted) "Marked as posted." else "Marked as ready.") }
   fun setActiveTab(tabIndex: Int) = _uiState.update { it.copy(activeTab = tabIndex) }
