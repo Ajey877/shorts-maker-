@@ -10,7 +10,8 @@ data class YouTubeVideoInfo(
   val durationSeconds: Int,
   val viewCountFormatted: String,
   val thumbnailUrl: String,
-  val description: String = ""
+  val description: String = "",
+  val isLocalMedia: Boolean = false
 ) {
   val formattedDuration: String
     get() {
@@ -21,10 +22,10 @@ data class YouTubeVideoInfo(
 }
 
 enum class CaptionStyle(val displayName: String, val badgeColor: Long) {
-  HORMOZI_BOLD("Hormozi Impact", 0xFFFFEA00), // Electric Yellow on Dark Box
-  NEON_GLOW("Neon Cyber", 0xFF00E5FF),      // Neon Cyan with Glow
-  CLEAN_MINIMAL("Clean Subtitle", 0xFFFFFFFF), // Crisp White with Drop Shadow
-  PUNCH_RED("Viral Red Box", 0xFFFF2A55)     // Crimson Highlight Box
+  HORMOZI_BOLD("Bold Impact", 0xFFFFEA00),
+  NEON_GLOW("Neon Cyber", 0xFF00E5FF),
+  CLEAN_MINIMAL("Clean Subtitle", 0xFFFFFFFF),
+  PUNCH_RED("Red Highlight", 0xFFFF2A55)
 }
 
 enum class FramingMode(val displayName: String) {
@@ -34,7 +35,7 @@ enum class FramingMode(val displayName: String) {
 }
 
 data class SubtitlePhrase(
-  val relativeSec: Float, // Relative to clip start
+  val relativeSec: Float,
   val text: String,
   val highlightWord: String = ""
 )
@@ -42,12 +43,12 @@ data class SubtitlePhrase(
 data class ShortClip(
   val id: String = UUID.randomUUID().toString(),
   val videoId: String,
-  val clipIndex: Int, // 1, 2, 3, or 4
+  val clipIndex: Int,
   val title: String,
   val hookHeadline: String,
   val startSeconds: Int,
   val endSeconds: Int,
-  val viralityScore: Int, // 80 - 99
+  val viralityScore: Int,
   val whyViralReason: String,
   val keyTakeaway: String,
   val suggestedHashtags: List<String>,
@@ -57,7 +58,7 @@ data class ShortClip(
   val isPosted: Boolean = false
 ) {
   val durationSeconds: Int
-    get() = (endSeconds - startSeconds).coerceIn(10, 30)
+    get() = (endSeconds - startSeconds).coerceIn(0, 30)
 
   val startTimestampFormatted: String
     get() = formatTime(startSeconds)
@@ -69,15 +70,14 @@ data class ShortClip(
     get() = "$startTimestampFormatted - $endTimestampFormatted (${durationSeconds}s)"
 
   private fun formatTime(totalSec: Int): String {
-    val m = totalSec / 60
-    val s = totalSec % 60
-    return String.format("%02d:%02d", m, s)
+    val safe = totalSec.coerceAtLeast(0)
+    return String.format("%02d:%02d", safe / 60, safe % 60)
   }
 }
 
 data class RetentionPoint(
-  val timeFraction: Float, // 0.0 to 1.0 along video
-  val retentionPercent: Int, // 0 to 100
+  val timeFraction: Float,
+  val retentionPercent: Int,
   val isPeak: Boolean = false,
   val associatedClipIndex: Int? = null
 )
