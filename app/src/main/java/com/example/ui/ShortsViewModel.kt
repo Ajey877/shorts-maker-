@@ -12,6 +12,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
 import com.example.data.local.ClipEntity
+import com.example.data.media.ClipExportService
 import com.example.data.remote.GeminiClipperService
 import com.example.data.repository.ShortsRepository
 import com.example.model.CaptionStyle
@@ -43,11 +44,14 @@ data class ShortsUiState(
   val customHookHeadline: String = "",
   val activeTab: Int = 0,
   val showUploadDialog: Boolean = false,
+  val isExporting: Boolean = false,
+  val exportedClipUri: Uri? = null,
   val bannerNotification: String? = null
 )
 
 class ShortsViewModel(application: Application) : AndroidViewModel(application) {
   private val repository: ShortsRepository
+  private val exportService = ClipExportService()
   private val _uiState = MutableStateFlow(ShortsUiState())
   val uiState: StateFlow<ShortsUiState> = _uiState.asStateFlow()
   val savedClips: StateFlow<List<ClipEntity>>
@@ -55,11 +59,7 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
   init {
     val db = AppDatabase.getDatabase(application)
     repository = ShortsRepository(db.clipDao(), GeminiClipperService())
-    savedClips = repository.savedClips.stateIn(
-      viewModelScope,
-      SharingStarted.WhileSubscribed(5000),
-      emptyList()
-    )
+    savedClips = repository.savedClips.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
   }
 
   fun onUrlInputChanged(newUrl: String) = _uiState.update { it.copy(urlInput = newUrl) }
@@ -76,36 +76,16 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
         retriever.setDataSource(getApplication<Application>(), uri)
         val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
         val durationSec = (durationMs / 1000L).toInt().coerceAtLeast(1)
-        val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.takeIf { it.isNotBlank() }
-          ?: "Imported video"
+        val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.takeIf { it.isNotBlank() } ?: "Imported video"
         val video = YouTubeVideoInfo(
-          id = "local_${uri.hashCode().toUInt().toString(16)}",
-          url = uri.toString(),
-          title = title,
-          channelName = "Local file",
-          durationSeconds = durationSec,
-          viewCountFormatted = "Local media",
-          thumbnailUrl = "",
-          description = "Imported local media",
-          isLocalMedia = true
+          id = "local_${uri.hashCode().toUInt().toString(16)}", url = uri.toString(), title = title,
+          channelName = "Local file", durationSeconds = durationSec, viewCountFormatted = "Local media",
+          thumbnailUrl = "", description = "Imported local media", isLocalMedia = true
         )
-        _uiState.update {
-          it.copy(
-            urlInput = uri.toString(),
-            currentVideo = video,
-            clips = emptyList(),
-            selectedClip = null,
-            retentionPoints = emptyList(),
-            playbackPositionSec = 0f,
-            isPlaying = false,
-            analysisStatusText = "Video imported. Analyze it to create candidate clips."
-          )
-        }
+        _uiState.update { it.copy(urlInput = uri.toString(), currentVideo = video, clips = emptyList(), selectedClip = null, retentionPoints = emptyList(), playbackPositionSec = 0f, isPlaying = false, exportedClipUri = null, analysisStatusText = "Video imported. Analyze it to create candidate clips.") }
       } catch (e: Exception) {
         showNotification("Could not read this video file.")
-      } finally {
-        retriever.release()
-      }
+      } finally { retriever.release() }
     }
   }
 
@@ -114,57 +94,18 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
     viewModelScope.launch {
       _uiState.update { it.copy(isAnalyzing = true, analysisStatusText = "Reading source media...") }
       try {
-        val videoInfo = if (_uiState.value.currentVideo?.isLocalMedia == true && _uiState.value.currentVideo?.url == urlOrQuery) {
-          _uiState.value.currentVideo!!
-        } else {
-          repository.resolveVideo(urlOrQuery)
-        }
-
-        _uiState.update {
-          it.copy(
-            currentVideo = videoInfo,
-            analysisStatusText = if (videoInfo.isLocalMedia) {
-              "Finding safe candidate segments from the local video..."
-            } else {
-              "YouTube page loaded as metadata only. Import the source video for real editing."
-            }
-          )
-        }
-
+        val videoInfo = if (_uiState.value.currentVideo?.isLocalMedia == true && _uiState.value.currentVideo?.url == urlOrQuery) _uiState.value.currentVideo!! else repository.resolveVideo(urlOrQuery)
+        _uiState.update { it.copy(currentVideo = videoInfo, analysisStatusText = if (videoInfo.isLocalMedia) "Finding safe candidate segments from the local video..." else "YouTube page loaded as metadata only. Import the source video for real editing.") }
         val generatedClips = repository.generateShortsForVideo(videoInfo)
-        val retention = repository.getRetentionCurve(generatedClips)
         val firstClip = generatedClips.firstOrNull()
-        _uiState.update {
-          it.copy(
-            isAnalyzing = false,
-            clips = generatedClips,
-            selectedClip = firstClip,
-            retentionPoints = retention,
-            customHookHeadline = firstClip?.hookHeadline ?: "",
-            playbackPositionSec = 0f,
-            isPlaying = false,
-            analysisStatusText = if (videoInfo.isLocalMedia) {
-              "Candidate segments ready. These are timeline candidates, not measured audience retention."
-            } else {
-              "Metadata-only mode. Import a local source to preview and export real video."
-            }
-          )
-        }
+        _uiState.update { it.copy(isAnalyzing = false, clips = generatedClips, selectedClip = firstClip, retentionPoints = repository.getRetentionCurve(generatedClips), customHookHeadline = firstClip?.hookHeadline ?: "", playbackPositionSec = 0f, isPlaying = false, exportedClipUri = null, analysisStatusText = if (videoInfo.isLocalMedia) "Candidate segments ready. These are timeline candidates, not measured audience retention." else "Metadata-only mode. Import a local source to preview and export real video.") }
       } catch (e: Exception) {
-        _uiState.update {
-          it.copy(
-            isAnalyzing = false,
-            analysisStatusText = "Analysis failed: ${e.message ?: "unknown error"}"
-          )
-        }
+        _uiState.update { it.copy(isAnalyzing = false, analysisStatusText = "Analysis failed: ${e.message ?: "unknown error"}") }
       }
     }
   }
 
-  fun selectClip(clip: ShortClip) = _uiState.update {
-    it.copy(selectedClip = clip, customHookHeadline = clip.hookHeadline, playbackPositionSec = 0f, isPlaying = false)
-  }
-
+  fun selectClip(clip: ShortClip) = _uiState.update { it.copy(selectedClip = clip, customHookHeadline = clip.hookHeadline, playbackPositionSec = 0f, isPlaying = false, exportedClipUri = null) }
   fun setCaptionStyle(style: CaptionStyle) = _uiState.update { it.copy(captionStyle = style) }
   fun setFramingMode(mode: FramingMode) = _uiState.update { it.copy(framingMode = mode) }
   fun onCustomHookChanged(hook: String) = _uiState.update { it.copy(customHookHeadline = hook) }
@@ -177,50 +118,51 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
 
   fun updateClipTrim(newStart: Int, newEnd: Int) {
     val current = _uiState.value.selectedClip ?: return
-    val sourceDuration = _uiState.value.currentVideo?.durationSeconds ?: Int.MAX_VALUE
-    val start = newStart.coerceIn(0, (sourceDuration - 1).coerceAtLeast(0))
-    val end = newEnd.coerceIn(start + 1, sourceDuration.coerceAtLeast(start + 1))
-    val duration = (end - start).coerceIn(10, 30)
-    val actualEnd = (start + duration).coerceAtMost(sourceDuration)
-    if (actualEnd <= start) return
-    val updated = current.copy(startSeconds = start, endSeconds = actualEnd)
-    _uiState.update { state ->
-      state.copy(selectedClip = updated, clips = state.clips.map { if (it.id == updated.id) updated else it }, playbackPositionSec = 0f)
+    val sourceDuration = _uiState.value.currentVideo?.durationSeconds ?: return
+    if (sourceDuration < 2) return
+    val start = newStart.coerceIn(0, sourceDuration - 1)
+    val requestedEnd = newEnd.coerceIn(start + 1, sourceDuration)
+    val end = if (requestedEnd - start < 10) (start + 10).coerceAtMost(sourceDuration) else requestedEnd.coerceAtMost(start + 30)
+    if (end <= start) return
+    val updated = current.copy(startSeconds = start, endSeconds = end)
+    _uiState.update { state -> state.copy(selectedClip = updated, clips = state.clips.map { if (it.id == updated.id) updated else it }, playbackPositionSec = 0f, exportedClipUri = null) }
+  }
+
+  fun exportCurrentClip() {
+    val video = _uiState.value.currentVideo ?: return
+    val clip = _uiState.value.selectedClip ?: return
+    if (!video.isLocalMedia) { showNotification("Import a local video before exporting."); return }
+    if (_uiState.value.isExporting) return
+    viewModelScope.launch {
+      _uiState.update { it.copy(isExporting = true, exportedClipUri = null, bannerNotification = "Exporting MP4…") }
+      try {
+        val uri = exportService.export(getApplication(), Uri.parse(video.url), clip)
+        _uiState.update { it.copy(isExporting = false, exportedClipUri = uri, bannerNotification = "MP4 exported successfully.") }
+      } catch (e: Exception) {
+        _uiState.update { it.copy(isExporting = false, exportedClipUri = null, bannerNotification = "Export failed: ${e.message ?: "unknown error"}") }
+      }
     }
+  }
+
+  fun shareExportedClip(context: Context) {
+    val uri = _uiState.value.exportedClipUri ?: run { showNotification("Export the clip first."); return }
+    runCatching {
+      context.startActivity(Intent.createChooser(Intent().apply { action = Intent.ACTION_SEND; putExtra(Intent.EXTRA_STREAM, uri); type = "video/mp4"; addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }, "Share ClipMint MP4"))
+    }.onFailure { showNotification("Could not open the share sheet.") }
   }
 
   fun saveCurrentClip() {
     val clip = _uiState.value.selectedClip ?: return
     val video = _uiState.value.currentVideo ?: return
-    viewModelScope.launch {
-      repository.saveClip(clip, video)
-      showNotification("Saved to ClipMint Library.")
-    }
+    viewModelScope.launch { repository.saveClip(clip, video); showNotification("Saved to ClipMint Library.") }
   }
-
-  fun deleteSavedClip(clipId: String) = viewModelScope.launch {
-    repository.deleteSavedClip(clipId)
-    showNotification("Clip removed from library.")
-  }
-
-  fun togglePostedStatus(clipId: String, isPosted: Boolean) = viewModelScope.launch {
-    repository.setPostedStatus(clipId, isPosted)
-    showNotification(if (isPosted) "Marked as posted." else "Marked as ready.")
-  }
-
+  fun deleteSavedClip(clipId: String) = viewModelScope.launch { repository.deleteSavedClip(clipId); showNotification("Clip removed from library.") }
+  fun togglePostedStatus(clipId: String, isPosted: Boolean) = viewModelScope.launch { repository.setPostedStatus(clipId, isPosted); showNotification(if (isPosted) "Marked as posted." else "Marked as ready.") }
   fun setActiveTab(tabIndex: Int) = _uiState.update { it.copy(activeTab = tabIndex) }
   fun setUploadDialogVisible(visible: Boolean) = _uiState.update { it.copy(showUploadDialog = visible) }
 
   fun copyShortsMetadata(context: Context, clip: ShortClip) {
-    val text = buildString {
-      appendLine(clip.title)
-      appendLine()
-      appendLine(clip.youtubeShortsDescription)
-      appendLine()
-      appendLine(clip.suggestedHashtags.joinToString(" "))
-      appendLine()
-      appendLine("Timestamp range: ${clip.rangeFormatted}")
-    }
+    val text = buildString { appendLine(clip.title); appendLine(); appendLine(clip.youtubeShortsDescription); appendLine(); appendLine(clip.suggestedHashtags.joinToString(" ")); appendLine(); appendLine("Timestamp range: ${clip.rangeFormatted}") }
     val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     clipboard.setPrimaryClip(ClipData.newPlainText("ClipMint Metadata", text))
     Toast.makeText(context, "Metadata copied", Toast.LENGTH_SHORT).show()
@@ -228,27 +170,18 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
 
   fun openYouTubeShortsUpload(context: Context, clip: ShortClip) {
     copyShortsMetadata(context, clip)
-    runCatching {
-      context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://studio.youtube.com")))
-    }.onFailure {
-      Toast.makeText(context, "Could not open YouTube Studio", Toast.LENGTH_SHORT).show()
-    }
+    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://studio.youtube.com"))) }.onFailure { Toast.makeText(context, "Could not open YouTube Studio", Toast.LENGTH_SHORT).show() }
   }
 
   fun shareShortsClip(context: Context, clip: ShortClip) {
+    val exported = _uiState.value.exportedClipUri
+    if (exported != null) { shareExportedClip(context); return }
     val body = "${clip.title}\n\n${clip.youtubeShortsDescription}\n\n${clip.suggestedHashtags.joinToString(" ")}\n\n${clip.rangeFormatted}"
-    context.startActivity(Intent.createChooser(Intent().apply {
-      action = Intent.ACTION_SEND
-      putExtra(Intent.EXTRA_TEXT, body)
-      type = "text/plain"
-    }, "Share ClipMint clip"))
+    context.startActivity(Intent.createChooser(Intent().apply { action = Intent.ACTION_SEND; putExtra(Intent.EXTRA_TEXT, body); type = "text/plain" }, "Share ClipMint metadata"))
   }
 
   private fun showNotification(message: String) {
     _uiState.update { it.copy(bannerNotification = message) }
-    viewModelScope.launch {
-      kotlinx.coroutines.delay(2500)
-      _uiState.update { it.copy(bannerNotification = null) }
-    }
+    viewModelScope.launch { kotlinx.coroutines.delay(2500); _uiState.update { it.copy(bannerNotification = null) } }
   }
 }
