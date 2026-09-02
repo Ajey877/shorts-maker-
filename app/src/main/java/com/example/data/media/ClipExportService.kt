@@ -10,12 +10,14 @@ import androidx.media3.transformer.Transformer
 import com.example.model.ShortClip
 import java.io.File
 import java.util.UUID
-import kotlin.coroutines.resume
-import kotlin.coroutines.resumeWithException
-import kotlinx.coroutines.suspendCancellableCoroutine
 
 class ClipExportService(private val context: Context) {
-  suspend fun export(sourceUri: Uri, clip: ShortClip): File = suspendCancellableCoroutine { continuation ->
+  fun export(
+    sourceUri: Uri,
+    clip: ShortClip,
+    onCompleted: (File) -> Unit,
+    onError: (Throwable) -> Unit
+  ) {
     val outputDir = context.getExternalFilesDir("clips") ?: context.cacheDir
     outputDir.mkdirs()
     val output = File(outputDir, "ClipMint_${clip.clipIndex}_${UUID.randomUUID()}.mp4")
@@ -30,16 +32,12 @@ class ClipExportService(private val context: Context) {
     val edited = EditedMediaItem.Builder(mediaItem).build()
     val transformer = Transformer.Builder(context)
       .addListener(object : Transformer.Listener {
-        override fun onCompleted(composition: androidx.media3.transformer.Composition, exportResult: ExportResult) {
-          if (continuation.isActive) continuation.resume(output)
-        }
+        override fun onCompleted(composition: androidx.media3.transformer.Composition, exportResult: ExportResult) { onCompleted(output) }
         override fun onError(composition: androidx.media3.transformer.Composition, exportResult: ExportResult, exportException: ExportException) {
-          output.delete()
-          if (continuation.isActive) continuation.resumeWithException(exportException)
+          output.delete(); onError(exportException)
         }
       }).build()
-    continuation.invokeOnCancellation { runCatching { transformer.cancel() }; output.delete() }
     try { transformer.start(edited, output.absolutePath) }
-    catch (e: Exception) { output.delete(); if (continuation.isActive) continuation.resumeWithException(e) }
+    catch (e: Exception) { output.delete(); onError(e) }
   }
 }
