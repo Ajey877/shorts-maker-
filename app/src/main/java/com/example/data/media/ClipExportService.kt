@@ -10,18 +10,15 @@ import androidx.media3.transformer.Transformer
 import com.example.model.ShortClip
 import java.io.File
 import java.util.UUID
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.suspendCancellableCoroutine
 
 class ClipExportService(private val context: Context) {
-  fun export(
-    sourceUri: Uri,
-    clip: ShortClip,
-    onCompleted: (File) -> Unit,
-    onError: (Throwable) -> Unit
-  ) {
+  suspend fun export(sourceUri: Uri, clip: ShortClip): File = suspendCancellableCoroutine { continuation ->
     val outputDir = context.getExternalFilesDir("clips") ?: context.cacheDir
     outputDir.mkdirs()
     val output = File(outputDir, "ClipMint_${clip.clipIndex}_${UUID.randomUUID()}.mp4")
-
     val mediaItem = MediaItem.Builder()
       .setUri(sourceUri)
       .setClippingConfiguration(
@@ -29,32 +26,20 @@ class ClipExportService(private val context: Context) {
           .setStartPositionMs(clip.startSeconds.coerceAtLeast(0) * 1000L)
           .setEndPositionMs(clip.endSeconds.coerceAtLeast(clip.startSeconds + 1) * 1000L)
           .build()
-      )
-      .build()
-
+      ).build()
     val edited = EditedMediaItem.Builder(mediaItem).build()
     val transformer = Transformer.Builder(context)
       .addListener(object : Transformer.Listener {
         override fun onCompleted(composition: androidx.media3.transformer.Composition, exportResult: ExportResult) {
-          onCompleted(output)
+          if (continuation.isActive) continuation.resume(output)
         }
-
-        override fun onError(
-          composition: androidx.media3.transformer.Composition,
-          exportResult: ExportResult,
-          exportException: ExportException
-        ) {
+        override fun onError(composition: androidx.media3.transformer.Composition, exportResult: ExportResult, exportException: ExportException) {
           output.delete()
-          onError(exportException)
+          if (continuation.isActive) continuation.resumeWithException(exportException)
         }
-      })
-      .build()
-
-    try {
-      transformer.start(edited, output.absolutePath)
-    } catch (e: Exception) {
-      output.delete()
-      onError(e)
-    }
+      }).build()
+    continuation.invokeOnCancellation { runCatching { transformer.cancel() }; output.delete() }
+    try { transformer.start(edited, output.absolutePath) }
+    catch (e: Exception) { output.delete(); if (continuation.isActive) continuation.resumeWithException(e) }
   }
 }
