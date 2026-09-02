@@ -8,6 +8,7 @@ import android.content.Intent
 import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.widget.Toast
+import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
@@ -31,23 +32,14 @@ import java.io.File
 
 
 data class ShortsUiState(
-  val urlInput: String = "",
-  val isAnalyzing: Boolean = false,
+  val urlInput: String = "", val isAnalyzing: Boolean = false,
   val analysisStatusText: String = "Import a video you own to begin.",
-  val currentVideo: YouTubeVideoInfo? = null,
-  val clips: List<ShortClip> = emptyList(),
-  val selectedClip: ShortClip? = null,
-  val retentionPoints: List<RetentionPoint> = emptyList(),
-  val isPlaying: Boolean = false,
-  val playbackPositionSec: Float = 0f,
-  val captionStyle: CaptionStyle = CaptionStyle.HORMOZI_BOLD,
-  val framingMode: FramingMode = FramingMode.CENTER_CROP,
-  val customHookHeadline: String = "",
-  val activeTab: Int = 0,
-  val showUploadDialog: Boolean = false,
-  val isExporting: Boolean = false,
-  val exportedClipUri: Uri? = null,
-  val bannerNotification: String? = null
+  val currentVideo: YouTubeVideoInfo? = null, val clips: List<ShortClip> = emptyList(),
+  val selectedClip: ShortClip? = null, val retentionPoints: List<RetentionPoint> = emptyList(),
+  val isPlaying: Boolean = false, val playbackPositionSec: Float = 0f,
+  val captionStyle: CaptionStyle = CaptionStyle.HORMOZI_BOLD, val framingMode: FramingMode = FramingMode.CENTER_CROP,
+  val customHookHeadline: String = "", val activeTab: Int = 0, val showUploadDialog: Boolean = false,
+  val isExporting: Boolean = false, val exportedClipUri: Uri? = null, val bannerNotification: String? = null
 )
 
 class ShortsViewModel(application: Application) : AndroidViewModel(application) {
@@ -62,7 +54,6 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
     repository = ShortsRepository(db.clipDao(), GeminiClipperService())
     savedClips = repository.savedClips.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
   }
-
   fun onUrlInputChanged(newUrl: String) = _uiState.update { it.copy(urlInput = newUrl) }
   fun loadPreset(url: String) { _uiState.update { it.copy(urlInput = url) }; analyzeVideo(url) }
 
@@ -76,8 +67,7 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
         val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.takeIf { it.isNotBlank() } ?: "Imported video"
         val video = YouTubeVideoInfo(id = "local_${uri.hashCode().toUInt().toString(16)}", url = uri.toString(), title = title, channelName = "Local file", durationSeconds = durationSec, viewCountFormatted = "Local media", thumbnailUrl = "", description = "Imported local media", isLocalMedia = true)
         _uiState.update { it.copy(urlInput = uri.toString(), currentVideo = video, clips = emptyList(), selectedClip = null, retentionPoints = emptyList(), playbackPositionSec = 0f, isPlaying = false, exportedClipUri = null, analysisStatusText = "Video imported. Analyze it to create candidate clips.") }
-      } catch (e: Exception) { showNotification("Could not read this video file.") }
-      finally { retriever.release() }
+      } catch (e: Exception) { showNotification("Could not read this video file.") } finally { retriever.release() }
     }
   }
 
@@ -94,7 +84,6 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
       } catch (e: Exception) { _uiState.update { it.copy(isAnalyzing = false, analysisStatusText = "Analysis failed: ${e.message ?: "unknown error"}") } }
     }
   }
-
   fun selectClip(clip: ShortClip) = _uiState.update { it.copy(selectedClip = clip, customHookHeadline = clip.hookHeadline, playbackPositionSec = 0f, isPlaying = false, exportedClipUri = null) }
   fun setCaptionStyle(style: CaptionStyle) = _uiState.update { it.copy(captionStyle = style) }
   fun setFramingMode(mode: FramingMode) = _uiState.update { it.copy(framingMode = mode) }
@@ -122,20 +111,17 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
     _uiState.update { it.copy(isExporting = true, exportedClipUri = null, bannerNotification = "Exporting MP4…") }
     exportService.export(Uri.parse(video.url), clip,
       onCompleted = { file ->
-        _uiState.update { it.copy(isExporting = false, exportedClipUri = Uri.fromFile(file), bannerNotification = "MP4 exported successfully.") }
+        val shareUri = FileProvider.getUriForFile(getApplication(), "${getApplication<Application>().packageName}.fileprovider", file)
+        _uiState.update { it.copy(isExporting = false, exportedClipUri = shareUri, bannerNotification = "MP4 exported successfully.") }
       },
-      onError = { error ->
-        _uiState.update { it.copy(isExporting = false, exportedClipUri = null, bannerNotification = "Export failed: ${error.message ?: "unknown error"}") }
-      }
+      onError = { error -> _uiState.update { it.copy(isExporting = false, exportedClipUri = null, bannerNotification = "Export failed: ${error.message ?: "unknown error"}") } }
     )
   }
 
   fun shareExportedClip(context: Context) {
     val uri = _uiState.value.exportedClipUri ?: run { showNotification("Export the clip first."); return }
-    runCatching { context.startActivity(Intent.createChooser(Intent().apply { action = Intent.ACTION_SEND; putExtra(Intent.EXTRA_STREAM, uri); type = "video/mp4"; addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }, "Share ClipMint MP4")) }
-      .onFailure { showNotification("Could not open the share sheet.") }
+    runCatching { context.startActivity(Intent.createChooser(Intent().apply { action = Intent.ACTION_SEND; putExtra(Intent.EXTRA_STREAM, uri); type = "video/mp4"; addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION) }, "Share ClipMint MP4")) }.onFailure { showNotification("Could not open the share sheet.") }
   }
-
   fun saveCurrentClip() { val clip = _uiState.value.selectedClip ?: return; val video = _uiState.value.currentVideo ?: return; viewModelScope.launch { repository.saveClip(clip, video); showNotification("Saved to ClipMint Library.") } }
   fun deleteSavedClip(clipId: String) = viewModelScope.launch { repository.deleteSavedClip(clipId); showNotification("Clip removed from library.") }
   fun togglePostedStatus(clipId: String, isPosted: Boolean) = viewModelScope.launch { repository.setPostedStatus(clipId, isPosted); showNotification(if (isPosted) "Marked as posted." else "Marked as ready.") }
@@ -148,21 +134,12 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
     clipboard.setPrimaryClip(ClipData.newPlainText("ClipMint Metadata", text))
     Toast.makeText(context, "Metadata copied", Toast.LENGTH_SHORT).show()
   }
-
-  fun openYouTubeShortsUpload(context: Context, clip: ShortClip) {
-    copyShortsMetadata(context, clip)
-    runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://studio.youtube.com"))) }.onFailure { Toast.makeText(context, "Could not open YouTube Studio", Toast.LENGTH_SHORT).show() }
-  }
-
+  fun openYouTubeShortsUpload(context: Context, clip: ShortClip) { copyShortsMetadata(context, clip); runCatching { context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://studio.youtube.com"))) }.onFailure { Toast.makeText(context, "Could not open YouTube Studio", Toast.LENGTH_SHORT).show() } }
   fun shareShortsClip(context: Context, clip: ShortClip) {
     val exported = _uiState.value.exportedClipUri
     if (exported != null) { shareExportedClip(context); return }
     val body = "${clip.title}\n\n${clip.youtubeShortsDescription}\n\n${clip.suggestedHashtags.joinToString(" ")}\n\n${clip.rangeFormatted}"
     context.startActivity(Intent.createChooser(Intent().apply { action = Intent.ACTION_SEND; putExtra(Intent.EXTRA_TEXT, body); type = "text/plain" }, "Share ClipMint metadata"))
   }
-
-  private fun showNotification(message: String) {
-    _uiState.update { it.copy(bannerNotification = message) }
-    viewModelScope.launch { kotlinx.coroutines.delay(2500); _uiState.update { it.copy(bannerNotification = null) } }
-  }
+  private fun showNotification(message: String) { _uiState.update { it.copy(bannerNotification = message) }; viewModelScope.launch { kotlinx.coroutines.delay(2500); _uiState.update { it.copy(bannerNotification = null) } } }
 }
