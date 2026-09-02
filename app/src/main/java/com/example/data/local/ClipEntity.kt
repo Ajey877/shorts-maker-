@@ -4,6 +4,8 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.example.model.ShortClip
 import com.example.model.SubtitlePhrase
+import org.json.JSONArray
+import org.json.JSONObject
 
 @Entity(tableName = "saved_clips")
 data class ClipEntity(
@@ -22,21 +24,33 @@ data class ClipEntity(
   val keyTakeaway: String,
   val suggestedHashtagsCsv: String,
   val youtubeShortsDescription: String,
-  val subtitlesJson: String, // simple formatted subtitle lines
+  val subtitlesJson: String,
   val isPosted: Boolean = false,
   val createdAt: Long = System.currentTimeMillis()
 ) {
   fun toDomain(): ShortClip {
-    val hashtags = suggestedHashtagsCsv.split(",").map { it.trim() }.filter { it.isNotEmpty() }
-    val subs = subtitlesJson.split(";;").mapNotNull { line ->
-      val parts = line.split("||")
-      if (parts.size >= 2) {
-        val relSec = parts[0].toFloatOrNull() ?: 0f
-        val text = parts[1]
-        val hl = parts.getOrNull(2) ?: ""
-        SubtitlePhrase(relSec, text, hl)
-      } else null
-    }
+    val hashtags = suggestedHashtagsCsv.split(",")
+      .map { it.trim() }
+      .filter { it.isNotEmpty() }
+
+    val subs = runCatching {
+      val array = JSONArray(subtitlesJson)
+      buildList {
+        for (i in 0 until array.length()) {
+          val obj = array.optJSONObject(i) ?: continue
+          val text = obj.optString("text")
+          if (text.isNotBlank()) {
+            add(
+              SubtitlePhrase(
+                relativeSec = obj.optDouble("relativeSec", 0.0).toFloat(),
+                text = text,
+                highlightWord = obj.optString("highlightWord")
+              )
+            )
+          }
+        }
+      }
+    }.getOrElse { emptyList() }
 
     return ShortClip(
       id = id,
@@ -64,9 +78,15 @@ data class ClipEntity(
       channelName: String,
       thumbnailUrl: String
     ): ClipEntity {
-      val hashtagsCsv = clip.suggestedHashtags.joinToString(",")
-      val subsJson = clip.sampleSubtitles.joinToString(";;") {
-        "${it.relativeSec}||${it.text}||${it.highlightWord}"
+      val subtitles = JSONArray()
+      clip.sampleSubtitles.forEach { subtitle ->
+        subtitles.put(
+          JSONObject().apply {
+            put("relativeSec", subtitle.relativeSec)
+            put("text", subtitle.text)
+            put("highlightWord", subtitle.highlightWord)
+          }
+        )
       }
 
       return ClipEntity(
@@ -83,9 +103,9 @@ data class ClipEntity(
         viralityScore = clip.viralityScore,
         whyViralReason = clip.whyViralReason,
         keyTakeaway = clip.keyTakeaway,
-        suggestedHashtagsCsv = hashtagsCsv,
+        suggestedHashtagsCsv = clip.suggestedHashtags.joinToString(","),
         youtubeShortsDescription = clip.youtubeShortsDescription,
-        subtitlesJson = subsJson,
+        subtitlesJson = subtitles.toString(),
         isPosted = clip.isPosted
       )
     }
