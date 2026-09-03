@@ -92,7 +92,7 @@ class ClipExportService(private val context: Context) {
 
   private fun createCaptionOverlay(
     clip: ShortClip,
-    style: CaptionStyle,
+    captionStyle: CaptionStyle,
     hookHeadline: String
   ): CanvasOverlay {
     val hook = hookHeadline.trim().takeIf { it.isNotBlank() && it != "EDIT THIS HOOK" }
@@ -115,12 +115,12 @@ class ClipExportService(private val context: Context) {
       override fun onDraw(canvas: Canvas, presentationTimeUs: Long) {
         val timeSec = presentationTimeUs / 1_000_000f
         if (hook != null) {
-          drawOutlinedText(canvas, hook, OUTPUT_WIDTH / 2f, 210f, 72f, 12f, style.badgeColor.toInt())
+          drawOutlinedText(canvas, hook, OUTPUT_WIDTH / 2f, 210f, 72f, 12f, captionStyle.badgeColor.toInt())
         }
 
         val subtitle = clip.sampleSubtitles.lastOrNull { it.relativeSec <= timeSec }
         if (subtitle != null && subtitle.text.isNotBlank()) {
-          drawOutlinedText(canvas, subtitle.text, OUTPUT_WIDTH / 2f, 1640f, 62f, 10f, style.badgeColor.toInt())
+          drawOutlinedText(canvas, subtitle.text, OUTPUT_WIDTH / 2f, 1640f, 62f, 10f, captionStyle.badgeColor.toInt())
         }
       }
 
