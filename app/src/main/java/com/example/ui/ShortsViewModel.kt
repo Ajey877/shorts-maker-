@@ -28,7 +28,6 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import java.io.File
 
 
 data class ShortsUiState(
@@ -85,9 +84,9 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
     }
   }
   fun selectClip(clip: ShortClip) = _uiState.update { it.copy(selectedClip = clip, customHookHeadline = clip.hookHeadline, playbackPositionSec = 0f, isPlaying = false, exportedClipUri = null) }
-  fun setCaptionStyle(style: CaptionStyle) = _uiState.update { it.copy(captionStyle = style) }
-  fun setFramingMode(mode: FramingMode) = _uiState.update { it.copy(framingMode = mode) }
-  fun onCustomHookChanged(hook: String) = _uiState.update { it.copy(customHookHeadline = hook) }
+  fun setCaptionStyle(style: CaptionStyle) = _uiState.update { it.copy(captionStyle = style, exportedClipUri = null) }
+  fun setFramingMode(mode: FramingMode) = _uiState.update { it.copy(framingMode = mode, exportedClipUri = null) }
+  fun onCustomHookChanged(hook: String) = _uiState.update { it.copy(customHookHeadline = hook, exportedClipUri = null) }
   fun togglePlayPause() = _uiState.update { it.copy(isPlaying = !it.isPlaying) }
   fun seekTo(relativeSec: Float) { val clip = _uiState.value.selectedClip ?: return; _uiState.update { it.copy(playbackPositionSec = relativeSec.coerceIn(0f, clip.durationSeconds.toFloat())) } }
 
@@ -104,15 +103,16 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
   }
 
   fun exportCurrentClip() {
-    val video = _uiState.value.currentVideo ?: return
-    val clip = _uiState.value.selectedClip ?: return
+    val state = _uiState.value
+    val video = state.currentVideo ?: return
+    val clip = state.selectedClip ?: return
     if (!video.isLocalMedia) { showNotification("Import a local video before exporting."); return }
-    if (_uiState.value.isExporting) return
-    _uiState.update { it.copy(isExporting = true, exportedClipUri = null, bannerNotification = "Exporting MP4…") }
-    exportService.export(Uri.parse(video.url), clip,
+    if (state.isExporting) return
+    _uiState.update { it.copy(isExporting = true, exportedClipUri = null, bannerNotification = "Exporting 9:16 MP4 with your edits…") }
+    exportService.export(Uri.parse(video.url), clip, state.captionStyle, state.customHookHeadline,
       onCompleted = { file ->
         val shareUri = FileProvider.getUriForFile(getApplication(), "${getApplication<Application>().packageName}.fileprovider", file)
-        _uiState.update { it.copy(isExporting = false, exportedClipUri = shareUri, bannerNotification = "MP4 exported successfully.") }
+        _uiState.update { it.copy(isExporting = false, exportedClipUri = shareUri, bannerNotification = "9:16 MP4 exported successfully.") }
       },
       onError = { error -> _uiState.update { it.copy(isExporting = false, exportedClipUri = null, bannerNotification = "Export failed: ${error.message ?: "unknown error"}") } }
     )
