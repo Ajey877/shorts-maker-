@@ -41,6 +41,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.Presentation
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import com.example.model.CaptionStyle
@@ -49,6 +51,7 @@ import com.example.model.ShortClip
 import com.example.model.YouTubeVideoInfo
 import kotlinx.coroutines.delay
 
+@OptIn(UnstableApi::class)
 @Composable
 fun ShortsStudioPlayer(
   clip: ShortClip,
@@ -83,6 +86,15 @@ fun ShortsStudioPlayer(
               .build()
           )
           .build()
+      )
+      setVideoEffects(
+        listOf(
+          Presentation.createForWidthAndHeight(
+            1080,
+            1920,
+            Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
+          )
+        )
       )
       prepare()
       repeatMode = Player.REPEAT_MODE_ONE
