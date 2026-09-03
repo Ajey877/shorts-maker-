@@ -100,6 +100,7 @@ dependencies {
   implementation(libs.media3.ui)
   implementation(libs.media3.common)
   implementation(libs.media3.transformer)
+  implementation(libs.media3.effect)
   testImplementation(libs.androidx.compose.ui.test.junit4)
   testImplementation(libs.androidx.core)
   testImplementation(libs.androidx.junit)
