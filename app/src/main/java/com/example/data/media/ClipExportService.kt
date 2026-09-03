@@ -46,12 +46,7 @@ class ClipExportService(private val context: Context) {
     )
 
     val edited = EditedMediaItem.Builder(mediaItem)
-      .setEffects(
-        Effects(
-          audioProcessors = emptyList(),
-          videoEffects = listOf(verticalCrop)
-        )
-      )
+      .setEffects(Effects(emptyList(), listOf(verticalCrop)))
       .build()
 
     val transformer = Transformer.Builder(context)
