@@ -17,12 +17,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmarks
@@ -74,19 +73,13 @@ class MainActivity : ComponentActivity() {
           }
         }
         val transcriptPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
-          uri?.let {
-            runCatching {
-              contentResolver.openInputStream(it)?.bufferedReader(Charsets.UTF_8).use { reader -> reader?.readText() }
-                ?: throw IllegalArgumentException("Could not read transcript file")
-            }.onSuccess { text -> viewModel.importTranscriptText(text) }
-              .onFailure { viewModel.importTranscriptText("") }
-          }
+          uri?.let { viewModel.importTranscriptUri(contentResolver, it) }
         }
 
         Scaffold(
           modifier = Modifier.fillMaxSize(),
           bottomBar = {
-            NavigationBar(containerColor = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface, modifier = Modifier.windowInsetsPadding(WindowInsets.navigationBars)) {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface, contentColor = MaterialTheme.colorScheme.onSurface, modifier = Modifier.navigationBarsPadding()) {
               NavigationBarItem(selected = uiState.activeTab == 0, onClick = { viewModel.setActiveTab(0) }, icon = { Icon(if (uiState.activeTab == 0) Icons.Filled.SmartDisplay else Icons.Outlined.SmartDisplay, "Studio") }, label = { Text("Shorts Studio", fontWeight = if (uiState.activeTab == 0) FontWeight.Bold else FontWeight.Normal) }, colors = NavigationBarItemDefaults.colors(selectedIconColor = MaterialTheme.colorScheme.primary, selectedTextColor = MaterialTheme.colorScheme.primary, indicatorColor = MaterialTheme.colorScheme.primaryContainer, unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant, unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant))
               NavigationBarItem(selected = uiState.activeTab == 1, onClick = { viewModel.setActiveTab(1) }, icon = { Icon(if (uiState.activeTab == 1) Icons.Filled.Bookmarks else Icons.Outlined.Bookmarks, "Library") }, label = { Text("Saved (${savedClips.size})", fontWeight = if (uiState.activeTab == 1) FontWeight.Bold else FontWeight.Normal) }, colors = NavigationBarItemDefaults.colors(selectedIconColor = MaterialTheme.colorScheme.primary, selectedTextColor = MaterialTheme.colorScheme.primary, indicatorColor = MaterialTheme.colorScheme.primaryContainer, unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant, unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant))
             }
@@ -117,25 +110,18 @@ class MainActivity : ComponentActivity() {
             }
 
             if (uiState.activeTab == 0) {
-              Column(
-                modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
-                horizontalAlignment = Alignment.End
-              ) {
+              Column(modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp), horizontalAlignment = Alignment.End) {
                 SmallFloatingActionButton(
                   onClick = { transcriptPicker.launch(arrayOf("text/*", "application/x-subrip", "text/vtt")) },
                   containerColor = MaterialTheme.colorScheme.secondaryContainer,
                   contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-                ) {
-                  Text("CC", fontWeight = FontWeight.Bold, fontSize = 12.sp)
-                }
+                ) { Text("CC", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
                 Spacer(Modifier.size(10.dp))
                 FloatingActionButton(
                   onClick = { videoPicker.launch(arrayOf("video/*")) },
                   containerColor = MaterialTheme.colorScheme.primary,
                   contentColor = MaterialTheme.colorScheme.onPrimary
-                ) {
-                  Icon(Icons.Filled.SmartDisplay, "Import video")
-                }
+                ) { Icon(Icons.Filled.SmartDisplay, "Import video") }
               }
             }
 
