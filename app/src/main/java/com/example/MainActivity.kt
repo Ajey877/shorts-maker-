@@ -13,14 +13,12 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -39,6 +37,7 @@ import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.getValue
@@ -72,6 +71,15 @@ class MainActivity : ComponentActivity() {
           uri?.let {
             try { contentResolver.takePersistableUriPermission(it, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: SecurityException) { }
             viewModel.loadLocalVideo(it)
+          }
+        }
+        val transcriptPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+          uri?.let {
+            runCatching {
+              contentResolver.openInputStream(it)?.bufferedReader(Charsets.UTF_8).use { reader -> reader?.readText() }
+                ?: throw IllegalArgumentException("Could not read transcript file")
+            }.onSuccess { text -> viewModel.importTranscriptText(text) }
+              .onFailure { viewModel.importTranscriptText("") }
           }
         }
 
@@ -109,8 +117,25 @@ class MainActivity : ComponentActivity() {
             }
 
             if (uiState.activeTab == 0) {
-              FloatingActionButton(onClick = { videoPicker.launch(arrayOf("video/*")) }, containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary, modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp)) {
-                Icon(Icons.Filled.SmartDisplay, "Import video")
+              Column(
+                modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp),
+                horizontalAlignment = Alignment.End
+              ) {
+                SmallFloatingActionButton(
+                  onClick = { transcriptPicker.launch(arrayOf("text/*", "application/x-subrip", "text/vtt")) },
+                  containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                  contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                ) {
+                  Text("CC", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
+                Spacer(Modifier.size(10.dp))
+                FloatingActionButton(
+                  onClick = { videoPicker.launch(arrayOf("video/*")) },
+                  containerColor = MaterialTheme.colorScheme.primary,
+                  contentColor = MaterialTheme.colorScheme.onPrimary
+                ) {
+                  Icon(Icons.Filled.SmartDisplay, "Import video")
+                }
               }
             }
 
