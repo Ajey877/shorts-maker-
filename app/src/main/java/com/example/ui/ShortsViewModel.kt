@@ -14,12 +14,15 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.local.AppDatabase
 import com.example.data.local.ClipEntity
 import com.example.data.media.ClipExportService
+import com.example.data.media.TimedSubtitle
+import com.example.data.media.TranscriptParser
 import com.example.data.remote.GeminiClipperService
 import com.example.data.repository.ShortsRepository
 import com.example.model.CaptionStyle
 import com.example.model.FramingMode
 import com.example.model.RetentionPoint
 import com.example.model.ShortClip
+import com.example.model.SubtitlePhrase
 import com.example.model.YouTubeVideoInfo
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -38,7 +41,8 @@ data class ShortsUiState(
   val isPlaying: Boolean = false, val playbackPositionSec: Float = 0f,
   val captionStyle: CaptionStyle = CaptionStyle.HORMOZI_BOLD, val framingMode: FramingMode = FramingMode.CENTER_CROP,
   val customHookHeadline: String = "", val activeTab: Int = 0, val showUploadDialog: Boolean = false,
-  val isExporting: Boolean = false, val exportedClipUri: Uri? = null, val bannerNotification: String? = null
+  val isExporting: Boolean = false, val exportedClipUri: Uri? = null, val bannerNotification: String? = null,
+  val transcriptEntryCount: Int = 0
 )
 
 class ShortsViewModel(application: Application) : AndroidViewModel(application) {
@@ -65,7 +69,7 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
         val durationSec = (durationMs / 1000L).toInt().coerceAtLeast(1)
         val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.takeIf { it.isNotBlank() } ?: "Imported video"
         val video = YouTubeVideoInfo(id = "local_${uri.hashCode().toUInt().toString(16)}", url = uri.toString(), title = title, channelName = "Local file", durationSeconds = durationSec, viewCountFormatted = "Local media", thumbnailUrl = "", description = "Imported local media", isLocalMedia = true)
-        _uiState.update { it.copy(urlInput = uri.toString(), currentVideo = video, clips = emptyList(), selectedClip = null, retentionPoints = emptyList(), playbackPositionSec = 0f, isPlaying = false, exportedClipUri = null, analysisStatusText = "Video imported. Analyze it to create candidate clips.") }
+        _uiState.update { it.copy(urlInput = uri.toString(), currentVideo = video, clips = emptyList(), selectedClip = null, retentionPoints = emptyList(), playbackPositionSec = 0f, isPlaying = false, exportedClipUri = null, transcriptEntryCount = 0, analysisStatusText = "Video imported. Analyze it to create candidate clips.") }
       } catch (e: Exception) { showNotification("Could not read this video file.") } finally { retriever.release() }
     }
   }
@@ -83,6 +87,47 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
       } catch (e: Exception) { _uiState.update { it.copy(isAnalyzing = false, analysisStatusText = "Analysis failed: ${e.message ?: "unknown error"}") } }
     }
   }
+
+  /** Apply a user-provided SRT/WebVTT transcript to the current candidate clips. */
+  fun importTranscriptText(content: String) {
+    val video = _uiState.value.currentVideo ?: run { showNotification("Import a video before importing a transcript."); return }
+    val entries = runCatching { TranscriptParser.parse(content) }.getOrElse {
+      showNotification("Could not parse this transcript.")
+      return
+    }
+    if (entries.isEmpty()) {
+      showNotification("No valid timed subtitle entries were found.")
+      return
+    }
+    val updatedClips = _uiState.value.clips.map { clip ->
+      clip.copy(sampleSubtitles = subtitlesForClip(entries, clip, video.durationSeconds))
+    }
+    val selectedId = _uiState.value.selectedClip?.id
+    _uiState.update { state ->
+      val selected = updatedClips.firstOrNull { it.id == selectedId }
+      state.copy(
+        clips = updatedClips,
+        selectedClip = selected,
+        transcriptEntryCount = entries.size,
+        analysisStatusText = "Loaded ${entries.size} real transcript entries. Captions use source timestamps."
+      )
+    }
+  }
+
+  private fun subtitlesForClip(entries: List<TimedSubtitle>, clip: ShortClip, sourceDurationSec: Int): List<SubtitlePhrase> {
+    val clipStartMs = clip.startSeconds.coerceAtLeast(0) * 1000L
+    val clipEndMs = clip.endSeconds.coerceAtMost(sourceDurationSec) * 1000L
+    return entries.asSequence()
+      .filter { it.endMs > clipStartMs && it.startMs < clipEndMs }
+      .map { entry ->
+        SubtitlePhrase(
+          relativeSec = ((entry.startMs.coerceAtLeast(clipStartMs) - clipStartMs) / 1000f),
+          text = entry.text
+        )
+      }
+      .toList()
+  }
+
   fun selectClip(clip: ShortClip) = _uiState.update { it.copy(selectedClip = clip, customHookHeadline = clip.hookHeadline, playbackPositionSec = 0f, isPlaying = false, exportedClipUri = null) }
   fun setCaptionStyle(style: CaptionStyle) = _uiState.update { it.copy(captionStyle = style, exportedClipUri = null) }
   fun setFramingMode(mode: FramingMode) = _uiState.update { it.copy(framingMode = mode, exportedClipUri = null) }
@@ -99,7 +144,8 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
     val end = if (requestedEnd - start < 10) (start + 10).coerceAtMost(sourceDuration) else requestedEnd.coerceAtMost(start + 30)
     if (end <= start) return
     val updated = current.copy(startSeconds = start, endSeconds = end)
-    _uiState.update { state -> state.copy(selectedClip = updated, clips = state.clips.map { if (it.id == updated.id) updated else it }, playbackPositionSec = 0f, exportedClipUri = null) }
+    val entries = _uiState.value.transcriptEntryCount
+    _uiState.update { state -> state.copy(selectedClip = updated, clips = state.clips.map { if (it.id == updated.id) updated else it }, playbackPositionSec = 0f, exportedClipUri = null, transcriptEntryCount = entries) }
   }
 
   fun exportCurrentClip() {
