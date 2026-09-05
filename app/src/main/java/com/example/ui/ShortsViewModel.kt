@@ -3,6 +3,7 @@ package com.example.ui
 import android.app.Application
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ContentResolver
 import android.content.Context
 import android.content.Intent
 import android.media.MediaMetadataRetriever
@@ -11,6 +12,8 @@ import android.widget.Toast
 import androidx.core.content.FileProvider
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.data.intelligence.ClipIntelligenceProvider
+import com.example.data.intelligence.TranscriptClipIntelligenceProvider
 import com.example.data.local.AppDatabase
 import com.example.data.local.ClipEntity
 import com.example.data.media.ClipExportService
@@ -48,7 +51,9 @@ data class ShortsUiState(
 class ShortsViewModel(application: Application) : AndroidViewModel(application) {
   private val repository: ShortsRepository
   private val exportService = ClipExportService(application)
+  private val transcriptProvider: ClipIntelligenceProvider = TranscriptClipIntelligenceProvider()
   private val _uiState = MutableStateFlow(ShortsUiState())
+  private var transcriptEntries: List<TimedSubtitle> = emptyList()
   val uiState: StateFlow<ShortsUiState> = _uiState.asStateFlow()
   val savedClips: StateFlow<List<ClipEntity>>
 
@@ -57,6 +62,7 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
     repository = ShortsRepository(db.clipDao(), GeminiClipperService())
     savedClips = repository.savedClips.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
   }
+
   fun onUrlInputChanged(newUrl: String) = _uiState.update { it.copy(urlInput = newUrl) }
   fun loadPreset(url: String) { _uiState.update { it.copy(urlInput = url) }; analyzeVideo(url) }
 
@@ -68,9 +74,10 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
         val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull() ?: 0L
         val durationSec = (durationMs / 1000L).toInt().coerceAtLeast(1)
         val title = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.takeIf { it.isNotBlank() } ?: "Imported video"
+        transcriptEntries = emptyList()
         val video = YouTubeVideoInfo(id = "local_${uri.hashCode().toUInt().toString(16)}", url = uri.toString(), title = title, channelName = "Local file", durationSeconds = durationSec, viewCountFormatted = "Local media", thumbnailUrl = "", description = "Imported local media", isLocalMedia = true)
         _uiState.update { it.copy(urlInput = uri.toString(), currentVideo = video, clips = emptyList(), selectedClip = null, retentionPoints = emptyList(), playbackPositionSec = 0f, isPlaying = false, exportedClipUri = null, transcriptEntryCount = 0, analysisStatusText = "Video imported. Analyze it to create candidate clips.") }
-      } catch (e: Exception) { showNotification("Could not read this video file.") } finally { retriever.release() }
+      } catch (_: Exception) { showNotification("Could not read this video file.") } finally { retriever.release() }
     }
   }
 
@@ -80,37 +87,41 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
       _uiState.update { it.copy(isAnalyzing = true, analysisStatusText = "Reading source media...") }
       try {
         val videoInfo = if (_uiState.value.currentVideo?.isLocalMedia == true && _uiState.value.currentVideo?.url == urlOrQuery) _uiState.value.currentVideo!! else repository.resolveVideo(urlOrQuery)
-        _uiState.update { it.copy(currentVideo = videoInfo, analysisStatusText = if (videoInfo.isLocalMedia) "Finding safe candidate segments from the local video..." else "YouTube page loaded as metadata only. Import the source video for real editing.") }
-        val generatedClips = repository.generateShortsForVideo(videoInfo)
+        _uiState.update { it.copy(currentVideo = videoInfo, analysisStatusText = if (videoInfo.isLocalMedia) "Finding candidate segments..." else "YouTube page loaded as metadata only. Import the source video for real editing.") }
+        val generatedClips = if (transcriptEntries.isNotEmpty() && videoInfo.isLocalMedia) {
+          transcriptProvider.findCandidates(videoInfo, transcriptEntries).map { clip -> clip.copy(sampleSubtitles = subtitlesForClip(transcriptEntries, clip, videoInfo.durationSeconds)) }
+        } else {
+          repository.generateShortsForVideo(videoInfo)
+        }
         val firstClip = generatedClips.firstOrNull()
-        _uiState.update { it.copy(isAnalyzing = false, clips = generatedClips, selectedClip = firstClip, retentionPoints = repository.getRetentionCurve(generatedClips), customHookHeadline = firstClip?.hookHeadline ?: "", playbackPositionSec = 0f, isPlaying = false, exportedClipUri = null, analysisStatusText = if (videoInfo.isLocalMedia) "Candidate segments ready. These are timeline candidates, not measured audience retention." else "Metadata-only mode. Import a local source to preview and export real video.") }
+        _uiState.update { it.copy(isAnalyzing = false, clips = generatedClips, selectedClip = firstClip, retentionPoints = repository.getRetentionCurve(generatedClips), customHookHeadline = firstClip?.hookHeadline ?: "", playbackPositionSec = 0f, isPlaying = false, exportedClipUri = null, analysisStatusText = when { transcriptEntries.isNotEmpty() && videoInfo.isLocalMedia -> "${transcriptEntries.size} transcript entries analyzed locally. Scores are language-based, not audience retention."; videoInfo.isLocalMedia -> "Candidate segments ready. Add a transcript for smarter local selection."; else -> "Metadata-only mode. Import a local source to preview and export real video." }) }
       } catch (e: Exception) { _uiState.update { it.copy(isAnalyzing = false, analysisStatusText = "Analysis failed: ${e.message ?: "unknown error"}") } }
     }
   }
 
-  /** Apply a user-provided SRT/WebVTT transcript to the current candidate clips. */
+  /** Read and parse a transcript selected through Android's document picker. */
+  fun importTranscriptUri(contentResolver: ContentResolver, uri: Uri) {
+    viewModelScope.launch {
+      val content = runCatching { contentResolver.openInputStream(uri)?.bufferedReader(Charsets.UTF_8)?.use { it.readText() } }.getOrNull()
+      if (content.isNullOrBlank()) { showNotification("Could not read this transcript file."); return@launch }
+      importTranscriptText(content)
+    }
+  }
+
+  /** Apply a user-provided SRT/WebVTT transcript and immediately re-score local candidates. */
   fun importTranscriptText(content: String) {
     val video = _uiState.value.currentVideo ?: run { showNotification("Import a video before importing a transcript."); return }
-    val entries = runCatching { TranscriptParser.parse(content) }.getOrElse {
-      showNotification("Could not parse this transcript.")
-      return
-    }
-    if (entries.isEmpty()) {
-      showNotification("No valid timed subtitle entries were found.")
-      return
-    }
-    val updatedClips = _uiState.value.clips.map { clip ->
-      clip.copy(sampleSubtitles = subtitlesForClip(entries, clip, video.durationSeconds))
-    }
-    val selectedId = _uiState.value.selectedClip?.id
-    _uiState.update { state ->
-      val selected = updatedClips.firstOrNull { it.id == selectedId }
-      state.copy(
-        clips = updatedClips,
-        selectedClip = selected,
-        transcriptEntryCount = entries.size,
-        analysisStatusText = "Loaded ${entries.size} real transcript entries. Captions use source timestamps."
-      )
+    val entries = runCatching { TranscriptParser.parse(content) }.getOrElse { emptyList() }
+    if (entries.isEmpty()) { showNotification("No valid timed subtitle entries were found."); return }
+    transcriptEntries = entries
+    viewModelScope.launch {
+      val generated = if (video.isLocalMedia) transcriptProvider.findCandidates(video, entries) else _uiState.value.clips
+      val updatedClips = generated.map { clip -> clip.copy(sampleSubtitles = subtitlesForClip(entries, clip, video.durationSeconds)) }
+      val selectedId = _uiState.value.selectedClip?.id
+      _uiState.update { state ->
+        val selected = updatedClips.firstOrNull { it.id == selectedId } ?: updatedClips.firstOrNull()
+        state.copy(clips = updatedClips, selectedClip = selected, transcriptEntryCount = entries.size, customHookHeadline = selected?.hookHeadline ?: "", retentionPoints = repository.getRetentionCurve(updatedClips), analysisStatusText = "Loaded ${entries.size} real transcript entries. Local candidate selection now uses transcript content.")
+      }
     }
   }
 
@@ -119,12 +130,7 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
     val clipEndMs = clip.endSeconds.coerceAtMost(sourceDurationSec) * 1000L
     return entries.asSequence()
       .filter { it.endMs > clipStartMs && it.startMs < clipEndMs }
-      .map { entry ->
-        SubtitlePhrase(
-          relativeSec = ((entry.startMs.coerceAtLeast(clipStartMs) - clipStartMs) / 1000f),
-          text = entry.text
-        )
-      }
+      .map { entry -> SubtitlePhrase(relativeSec = ((entry.startMs.coerceAtLeast(clipStartMs) - clipStartMs) / 1000f), text = entry.text) }
       .toList()
   }
 
@@ -143,9 +149,8 @@ class ShortsViewModel(application: Application) : AndroidViewModel(application) 
     val requestedEnd = newEnd.coerceIn(start + 1, sourceDuration)
     val end = if (requestedEnd - start < 10) (start + 10).coerceAtMost(sourceDuration) else requestedEnd.coerceAtMost(start + 30)
     if (end <= start) return
-    val updated = current.copy(startSeconds = start, endSeconds = end)
-    val entries = _uiState.value.transcriptEntryCount
-    _uiState.update { state -> state.copy(selectedClip = updated, clips = state.clips.map { if (it.id == updated.id) updated else it }, playbackPositionSec = 0f, exportedClipUri = null, transcriptEntryCount = entries) }
+    val updated = current.copy(startSeconds = start, endSeconds = end, sampleSubtitles = subtitlesForClip(transcriptEntries, current.copy(startSeconds = start, endSeconds = end), sourceDuration))
+    _uiState.update { state -> state.copy(selectedClip = updated, clips = state.clips.map { if (it.id == updated.id) updated else it }, playbackPositionSec = 0f, exportedClipUri = null) }
   }
 
   fun exportCurrentClip() {
